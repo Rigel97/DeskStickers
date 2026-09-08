@@ -31,16 +31,13 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
         case widthOnly(anchorsRight: Bool)
         /// 底部边缘：仅调高，进入固定高度模式。
         case heightOnly
-        /// 角落手柄默认：宽高独立自由调整。
-        case freeCorner
-        /// 角落手柄 + ⌥：等比缩放（宽高 + 字号）。
-        case proportional
+        /// 角落手柄 + ⌥：宽高独立自由调整，字号保持不变（换纸面重新排版）。
+        case paperOnlyCorner
     }
 
     private(set) var isEditing = false
     private var isPopoverVisible = false
     private var isMouseInside = false
-    private var resizeMode: ResizeMode = .widthOnly(anchorsRight: false)
     private var resizeStartPaperWidth: CGFloat?
     private var resizeStartPaperHeight: CGFloat?
     private var resizeStartPaperMaxX: CGFloat?
@@ -110,11 +107,12 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
         catcher.onDragEnded = { [weak self] in self?.commitWindowFrame(interacted: true) }
         catcher.onContextMenu = { [weak self] _ in self?.presentContextMenu() }
 
-        // 缩放手柄（右下角）：默认自由调整宽高，⌥ 拖动等比缩放（含字号）
-        grip.toolTip = "拖动调整宽高 · 按住 ⌥ 拖动等比缩放（含字号）"
+        // 缩放手柄（右下角）：默认字号跟随纸面大小（对角线等比），
+        // ⌥ 拖动 = 仅调整纸面宽高、字号不变
+        grip.toolTip = "拖动整体缩放（字号跟随）· 按住 ⌥ 拖动仅调整纸面（字号不变）"
         grip.onResizeDelta = { [weak self] dx, dy, option in
             self?.handleResizeDelta(dx: dx, dy: dy,
-                                    mode: option ? .proportional : .freeCorner)
+                                    mode: option ? .paperOnlyCorner : nil)
         }
         grip.onResizeEnded = { [weak self] in self?.handleResizeEnded() }
         grip.onResizeStart = { [weak self] in self?.handleResizeStart() }
@@ -495,8 +493,7 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
 
     // MARK: - 拖动 / 缩放手势
 
-    private func handleResizeStart(mode: ResizeMode = .freeCorner) {
-        resizeMode = mode
+    private func handleResizeStart(mode: ResizeMode? = nil) {
         resizeStartPaperWidth = sticker.paperFrame.width
         resizeStartPaperHeight = sticker.paperFrame.height
         resizeStartPaperMaxX = sticker.paperFrame.maxX
@@ -504,7 +501,8 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
     }
 
     /// 处理缩放拖动增量（屏幕坐标系：dx 向右为正，dy 向上为正）。
-    private func handleResizeDelta(dx: CGFloat, dy: CGFloat, mode: ResizeMode) {
+    /// mode 传 nil = 角落手柄默认模式（字号跟随纸面对角线等比缩放）。
+    private func handleResizeDelta(dx: CGFloat, dy: CGFloat, mode: ResizeMode?) {
         switch mode {
         case .widthOnly(let anchorsRight):
             let startWidth = resizeStartPaperWidth ?? sticker.paperFrame.width
@@ -514,15 +512,19 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
             // 屏幕坐标 y 向上，向下拖（dy < 0）= 变高
             let startHeight = resizeStartPaperHeight ?? sticker.paperFrame.height
             applyPaperHeight(startHeight - dy)
-        case .freeCorner:
+        case .paperOnlyCorner:
             let startWidth = resizeStartPaperWidth ?? sticker.paperFrame.width
             let startHeight = resizeStartPaperHeight ?? sticker.paperFrame.height
             applyPaperSize(width: startWidth + dx, height: startHeight - dy)
-        case .proportional:
-            // ⌥ + 角落手柄：按拖出的宽度比例缩放整体（字号、内边距、宽高一起变）。
+        case nil:
+            // 角落手柄默认：按对角线长度比例整体缩放（字号、内边距、宽高一起变），
+            // 纵向拖动也参与，手感与「拖大整张贴纸」一致。
             let startWidth = resizeStartPaperWidth ?? sticker.paperFrame.width
-            guard startWidth > 1 else { return }
-            let factor = (startWidth + dx) / startWidth
+            let startHeight = resizeStartPaperHeight ?? sticker.paperFrame.height
+            guard startWidth > 1, startHeight > 1 else { return }
+            let startDiagonal = hypot(startWidth, startHeight)
+            let endDiagonal = hypot(max(10, startWidth + dx), max(10, startHeight - dy))
+            let factor = endDiagonal / startDiagonal
             applyPaperScale(resizeStartScale * Double(factor), anchorsRight: false, commit: false)
         }
     }

@@ -290,22 +290,28 @@ check("底部边缘拖动：高度 +80", near(h2, base_h + 80, 3), f"{h2} vs {ba
 check("宽度不变", near(w2, base_w), f"{w2}")
 check("顶边锚定", near(y2, base_top), f"{y2}")
 check("进入固定高度模式", s2.get("heightOverride") is not None)
-# 角落手柄自由拖 (+60, -40) → 宽 +60 高 +40
+# 角落手柄默认拖 = 整体等比缩放（字号跟随）：按对角线比例，宽高同步、scale 变化
+import math
+scale_before = s2["scale"]
+start_diag = math.hypot(w2, h2)
 dn("gripDrag", id=sid2, target="grip", forceShow="1", dx="60", dy="-40")
 state = dump()
 s3 = sticker_by_id(state, sid2)
 x3, y3, w3, h3 = rect_of(s3)
-check("角落自由拖：宽 +60 高 +40", near(w3, w2 + 60, 3) and near(h3, h2 + 40, 3), f"({w3},{h3}) vs ({w2},{h2})")
-# ⌥ + 角落拖 = 等比缩放（宽高同步，scale 变化）
+factor = math.hypot(w2 + 60, h2 + 40) / start_diag
+check("角落默认拖：按对角线等比（宽）", near(w3, w2 * factor, 3), f"{w3} vs {w2 * factor:.1f}")
+check("角落默认拖：按对角线等比（高）", near(h3, h2 * factor, 3), f"{h3} vs {h2 * factor:.1f}")
+check("角落默认拖：字号（scale）同步放大", s3["scale"] > scale_before, f"{scale_before} -> {s3['scale']}")
+# ⌥ + 角落拖 = 仅调纸面：宽高自由变化、scale 不变
 scale_before = s3["scale"]
-dn("gripDrag", id=sid2, target="grip", forceShow="1", option="1", dx="60", dy="0")
+dn("gripDrag", id=sid2, target="grip", forceShow="1", option="1", dx="60", dy="-40")
 state = dump()
 s4 = sticker_by_id(state, sid2)
 x4, y4, w4, h4 = rect_of(s4)
 scale_after = s4["scale"]
-check("⌥ 拖动等比：宽度 +60", near(w4, w3 + 60, 3), f"{w4} vs {w3 + 60}")
-check("⌥ 拖动等比：高度按比例跟随（dy=0 仍变高）", near(h4, h3 * (w3 + 60) / w3, 3), f"{h4} vs {h3 * (w3 + 60) / w3:.1f}")
-check("⌥ 拖动等比：scale 同步变化", scale_after > scale_before, f"{scale_before} -> {scale_after}")
+check("⌥ 角落拖：宽 +60（仅纸面）", near(w4, w3 + 60, 3), f"{w4} vs {w3 + 60}")
+check("⌥ 角落拖：高 +40（仅纸面）", near(h4, h3 + 40, 3), f"{h4} vs {h3 + 40}")
+check("⌥ 角落拖：字号不变", near(scale_after, scale_before, 1e-6), f"{scale_before} -> {scale_after}")
 # 恢复自动高度
 dn("setHeight", id=sid2, height="-")
 state = dump()
