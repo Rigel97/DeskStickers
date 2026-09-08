@@ -91,6 +91,29 @@ public struct StickerStyle {
         return variants[max(0, min(index, variants.count - 1))]
     }
 
+    /// 在当前 CG 上下文中绘制纸面。
+    ///
+    /// 风格绘制约定纸面局部坐标系（原点 = 纸面左上角，y 向下），
+    /// 本方法负责平移 CTM 并构造绘制上下文——调用方只给纸面矩形，
+    /// 不可能再犯「忘记平移导致装饰画到纸面外」的错误。
+    ///
+    /// - Parameters:
+    ///   - cg: 目标上下文（画布或离屏位图均可）。
+    ///   - paperRect: 纸面在**当前上下文坐标系**中的矩形。
+    public func drawPaper(in cg: CGContext, paperRect: CGRect, colorIndex: Int) {
+        let context = StickerDrawContext(
+            paper: CGRect(origin: .zero, size: paperRect.size),
+            variant: variant(colorIndex),
+            colorIndex: colorIndex,
+            textInsets: textInsets,
+            shadow: shadow
+        )
+        cg.saveGState()
+        cg.translateBy(x: paperRect.minX, y: paperRect.minY)
+        draw(context)
+        cg.restoreGState()
+    }
+
     /// 纸面四周（窗口内）的留白，用于容纳阴影、装饰与悬停工具栏。
     public var outerInsets: NSEdgeInsets {
         let base = ceil(shadow.blur * 0.55) + 3
@@ -159,8 +182,15 @@ public enum StickerStyles {
         notebook, handwritten, sticky, minimal, vintage, blackboard, cute, mono
     ]
 
+    /// id → 风格 的字典缓存（style(id:) 在布局/绘制路径上被高频调用）。
+    private static let byID: [String: StickerStyle] = {
+        var map: [String: StickerStyle] = [:]
+        for style in all { map[style.id] = style }
+        return map
+    }()
+
     public static func style(id: String) -> StickerStyle {
-        all.first { $0.id == id } ?? sticky
+        byID[id] ?? sticky
     }
 
     public static func index(of id: String) -> Int {

@@ -37,18 +37,8 @@ public enum StickerPreviewRenderer {
         NSGraphicsContext.current = context
 
         let paper = CGRect(x: insets.left, y: insets.top, width: paperWidth, height: paperHeight)
-        // 与 StickerCanvasView 一致：平移到纸面局部坐标系后再调用风格绘制。
-        cg.saveGState()
-        cg.translateBy(x: insets.left, y: insets.top)
-        let drawContext = StickerDrawContext(
-            paper: CGRect(origin: .zero, size: paper.size),
-            variant: style.variant(colorIndex),
-            colorIndex: colorIndex,
-            textInsets: style.textInsets,
-            shadow: style.shadow
-        )
-        style.draw(drawContext)
-        cg.restoreGState()
+        // 与 StickerCanvasView 走同一个绘制入口（纸面局部坐标系 + CTM 平移）。
+        style.drawPaper(in: cg, paperRect: paper, colorIndex: colorIndex)
 
         let textRect = CGRect(
             x: paper.minX + style.textInsets.left,

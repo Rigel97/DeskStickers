@@ -37,8 +37,17 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
 
     private lazy var stylePopover = StylePickerPopover()
 
-    /// 实际生效的风格：基础风格 × 缩放 + 字体覆盖。
-    var style: StickerStyle { sticker.effectiveStyle() }
+    /// 实际生效风格的缓存：style 在布局/绘制/命中测试路径上被高频访问，
+    /// 而派生参数（styleID/scale/字体覆盖）只在 refreshTextAppearance 里变更，
+    /// 在那里统一失效即可。
+    private var cachedStyle: StickerStyle?
+
+    var style: StickerStyle {
+        if let cached = cachedStyle { return cached }
+        let computed = sticker.effectiveStyle()
+        cachedStyle = computed
+        return computed
+    }
     var panel: StickerPanel? { view.window as? StickerPanel }
 
     init(sticker: Sticker, callbacks: Callbacks) {
@@ -354,6 +363,7 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
 
     /// 依据最新的 effectiveStyle 重新配置画布与文字外观，并按顶边锚定重排窗口。
     private func refreshTextAppearance(animate: Bool = false, commit: Bool = true) {
+        cachedStyle = nil // 派生参数（styleID/scale/字体覆盖）已变，缓存失效
         let current = style
         canvas.style = current
         canvas.colorIndex = sticker.colorIndex

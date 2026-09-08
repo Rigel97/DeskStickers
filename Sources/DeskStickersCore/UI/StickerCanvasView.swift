@@ -45,22 +45,8 @@ final class StickerCanvasView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let paper = paperRect
-        let context = StickerDrawContext(
-            paper: CGRect(origin: .zero, size: paper.size),
-            variant: style.variant(colorIndex),
-            colorIndex: colorIndex,
-            textInsets: style.textInsets,
-            shadow: style.shadow
-        )
-        // 风格绘制约定：纸面局部坐标系（原点 = 纸面左上角，y 向下）。
-        // 平移 CTM 到纸面原点再调用，否则装饰元素会整体偏移到纸面外。
         if let cg = NSGraphicsContext.current?.cgContext {
-            cg.saveGState()
-            cg.translateBy(x: paper.minX, y: paper.minY)
-            style.draw(context)
-            cg.restoreGState()
-        } else {
-            style.draw(context)
+            style.drawPaper(in: cg, paperRect: paper, colorIndex: colorIndex)
         }
 
         if let placeholder = placeholderText {
