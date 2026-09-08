@@ -36,8 +36,11 @@ final class AutomationBridge: NSObject {
             ("setFont", #selector(handleSetFont)),
             ("delete", #selector(handleDelete)),
             ("deleteAll", #selector(handleDeleteAll)),
+            ("undo", #selector(handleUndo)),
             ("hideAll", #selector(handleHideAll)),
             ("showAll", #selector(handleShowAll)),
+            ("setPinned", #selector(handleSetPinned)),
+            ("reveal", #selector(handleReveal)),
             ("snapshot", #selector(handleSnapshot)),
             ("dump", #selector(handleDump)),
             ("flush", #selector(handleFlush)),
@@ -77,7 +80,8 @@ final class AutomationBridge: NSObject {
         }
         appController.createSticker(
             text: text, styleID: styleID, colorIndex: colorIndex,
-            paperTopLeftCG: paperTopLeft, paperWidthOverride: widthOverride
+            paperTopLeftCG: paperTopLeft, paperWidthOverride: widthOverride,
+            registersUndo: false
         )
         appController.store.persistNow()
     }
@@ -130,6 +134,20 @@ final class AutomationBridge: NSObject {
         for sticker in appController.store.stickers {
             appController.deleteSticker(sticker.id, animated: false)
         }
+    }
+
+    @objc private func handleUndo(_ note: Notification) {
+        appController.performUndo()
+    }
+
+    @objc private func handleSetPinned(_ note: Notification) {
+        guard let pinned = info(note)["pinned"] else { return }
+        appController.applyPinnedToDesktop(pinned == "1")
+    }
+
+    @objc private func handleReveal(_ note: Notification) {
+        guard let id = stickerID(note) else { return }
+        appController.revealSticker(id: id)
     }
 
     @objc private func handleHideAll(_ note: Notification) {

@@ -146,6 +146,22 @@ test("存储-全局隐藏标记持久化") {
     expect(StickerStore(directory: dir).allHidden)
 }
 
+test("存储-钉在桌面标记持久化与旧版兼容") {
+    let dir = tempStoreDir(); defer { try? FileManager.default.removeItem(at: dir) }
+    let store = StickerStore(directory: dir)
+    expect(!store.pinnedToDesktop, "默认未钉在桌面")
+    store.setPinnedToDesktop(true)
+    store.persistNow()
+    expect(StickerStore(directory: dir).pinnedToDesktop, "重启后保留钉在桌面状态")
+
+    // 旧版本状态文件没有 pinnedToDesktop 字段 → 解码为 false
+    let legacy = Data("""
+    {"version":1,"allHidden":false,"stickers":[]}
+    """.utf8)
+    let decoded = try JSONDecoder().decode(StickerStoreSnapshot.self, from: legacy)
+    expect(!decoded.pinnedToDesktop, "旧版 JSON 缺字段时默认 false")
+}
+
 test("存储-moveToEnd 调整层级顺序") {
     let dir = tempStoreDir(); defer { try? FileManager.default.removeItem(at: dir) }
     let store = StickerStore(directory: dir)

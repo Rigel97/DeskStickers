@@ -9,12 +9,14 @@ final class StylePreviewCell: NSView {
     private let previewView = PreviewImageView(frame: .zero)
     private let label = NSTextField(labelWithString: "")
     private var selected = false
+    private var hovered = false
 
     override var isFlipped: Bool { true }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        layer?.cornerRadius = 7
         previewView.wantsLayer = true
         addSubview(previewView)
         label.font = NSFont.systemFont(ofSize: 10.5)
@@ -44,12 +46,38 @@ final class StylePreviewCell: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        // 悬停底色：给「这些卡片可以点」一个即时视觉反馈。
+        if hovered, !selected {
+            NSColor.labelColor.withAlphaComponent(0.06).setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 6, yRadius: 6).fill()
+        }
         if selected {
             NSColor.controlAccentColor.setStroke()
             let ring = NSBezierPath(roundedRect: previewView.frame.insetBy(dx: -1.5, dy: -1.5), xRadius: 6, yRadius: 6)
             ring.lineWidth = 2.5
             ring.stroke()
         }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        ))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hovered = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovered = false
+        needsDisplay = true
     }
 
     override func mouseDown(with event: NSEvent) {

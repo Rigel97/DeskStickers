@@ -118,6 +118,10 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
             if self.isEditing { self.endEditing() } else { self.beginEditing() }
         }
         toolbar.onStyle = { [weak self] in self?.toggleStylePopover() }
+        toolbar.onDuplicate = { [weak self] in
+            guard let self else { return }
+            self.callbacks.onDuplicate(self.sticker)
+        }
         toolbar.onDelete = { [weak self] in
             guard let self else { return }
             self.callbacks.onDelete(self.sticker)
@@ -467,6 +471,20 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
     }
 
     // MARK: - 悬停工具栏
+
+    /// 定位反馈：短暂降低再恢复不透明度，让用户一眼找到这张贴纸。
+    func flashPanel() {
+        guard let panel = panel else { return }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.16
+            panel.animator().alphaValue = 0.3
+        }, completionHandler: {
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.16
+                panel.animator().alphaValue = 1
+            }, completionHandler: nil)
+        })
+    }
 
     private func updateChrome(initial: Bool = false) {
         let visible = isEditing || isMouseInside || isPopoverVisible

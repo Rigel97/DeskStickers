@@ -1,14 +1,16 @@
 import AppKit
 
-/// 悬停工具栏：编辑 / 风格 / 删除 三个操作的胶囊按钮组。
+/// 悬停工具栏：编辑 / 风格 / 复制 / 删除 四个操作的胶囊按钮组。
 final class CapsuleToolbar: NSView {
 
     var onEdit: (() -> Void)?
     var onStyle: (() -> Void)?
+    var onDuplicate: (() -> Void)?
     var onDelete: (() -> Void)?
 
     private let editButton = FirstMouseButton()
     private let styleButton = FirstMouseButton()
+    private let duplicateButton = FirstMouseButton()
     private let deleteButton = FirstMouseButton()
     private var isEditingState = false
 
@@ -22,12 +24,14 @@ final class CapsuleToolbar: NSView {
 
         for (button, symbol, action) in [(editButton, "square.and.pencil", #selector(editTapped)),
                                          (styleButton, "paintpalette", #selector(styleTapped)),
+                                         (duplicateButton, "plus.square.on.square", #selector(duplicateTapped)),
                                          (deleteButton, "trash", #selector(deleteTapped))] {
             configureButton(button, symbol: symbol, action: action)
         }
 
         editButton.toolTip = "编辑文字"
         styleButton.toolTip = "更换风格"
+        duplicateButton.toolTip = "复制贴纸"
         deleteButton.toolTip = "删除贴纸"
     }
 
@@ -50,12 +54,15 @@ final class CapsuleToolbar: NSView {
     override func layout() {
         super.layout()
         let size = NSSize(width: 28, height: 24)
-        editButton.frame = NSRect(x: 4, y: (bounds.height - size.height) / 2, width: size.width, height: size.height)
-        styleButton.frame = NSRect(x: 4 + 30, y: editButton.frame.minY, width: size.width, height: size.height)
-        deleteButton.frame = NSRect(x: 4 + 60, y: editButton.frame.minY, width: size.width, height: size.height)
+        let gap: CGFloat = 30
+        let buttons = [editButton, styleButton, duplicateButton, deleteButton]
+        for (index, button) in buttons.enumerated() {
+            button.frame = NSRect(x: 4 + CGFloat(index) * gap, y: (bounds.height - size.height) / 2,
+                                  width: size.width, height: size.height)
+        }
     }
 
-    override var intrinsicContentSize: NSSize { NSSize(width: 96, height: 26) }
+    override var intrinsicContentSize: NSSize { NSSize(width: 126, height: 26) }
 
     func setEditingState(_ editing: Bool) {
         isEditingState = editing
@@ -73,6 +80,7 @@ final class CapsuleToolbar: NSView {
 
     @objc private func editTapped() { onEdit?() }
     @objc private func styleTapped() { onStyle?() }
+    @objc private func duplicateTapped() { onDuplicate?() }
     @objc private func deleteTapped() { onDelete?() }
 }
 

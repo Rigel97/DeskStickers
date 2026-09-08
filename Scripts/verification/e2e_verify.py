@@ -270,9 +270,34 @@ check("allHidden = false", state["allHidden"] is False)
 time.sleep(0.5)
 check("窗口全部恢复", len(windowlist()) == 7, str(len(windowlist())))
 
-print("\n== 12. 持久化：重启恢复 ==")
+print("\n== 12. 撤销删除（⌘Z 行为）==")
+state = dump()
+target = state["stickers"][0]
+dn("delete", id=target["id"])
+state = dump()
+check("删除后剩 6 张", state and len(state["stickers"]) == 6)
+dn("undo")
+state = dump()
+check("撤销后恢复 7 张", state and len(state["stickers"]) == 7)
+check("恢复的是同一张贴纸（文字一致）",
+      any(st["id"] == target["id"] and st["text"] == target["text"] for st in state["stickers"]))
+
+print("\n== 13. 钉在桌面模式（层级切换）==")
+dn("setPinned", pinned="1")
+state = dump()
+check("pinnedToDesktop = true", state["pinnedToDesktop"] is True)
+check("层级切换为桌面层", state["stickers"] and state["stickers"][0]["level"] != 3,
+      str(state["stickers"][0]["level"] if state["stickers"] else None))
+dn("setPinned", pinned="0")
+state = dump()
+check("恢复悬浮层级 (3)", state["stickers"] and state["stickers"][0]["level"] == 3,
+      str(state["stickers"][0]["level"] if state["stickers"] else None))
+
+print("\n== 14. 持久化：重启恢复 ==")
 before = dump()
 before_map = {st["id"]: (st["text"], st["style"], st["colorIndex"], rect_of(st)) for st in before["stickers"]}
+# 顺带验证钉在桌面状态跨重启保留
+dn("setPinned", pinned="1")
 dn("flush")
 time.sleep(0.5)
 pid = int(open(APP_PID_FILE).read().strip())
@@ -298,6 +323,9 @@ open(APP_PID_FILE, "w").write(new_pid)
 after = dump(timeout=8)
 check("重启后可响应", after is not None)
 if after:
+    check("钉在桌面状态跨重启保留", after["pinnedToDesktop"] is True)
+    dn("setPinned", pinned="0")
+    after = dump()
     check("贴纸数量一致", len(after["stickers"]) == len(before["stickers"]),
           f"{len(after.get('stickers', []))} vs {len(before['stickers'])}")
     restored_ok = True
@@ -316,7 +344,7 @@ if after:
     check("文字/风格/颜色/位置完整恢复", restored_ok)
     check("恢复后窗口可见", len(windowlist()) == len(after["stickers"]), str(windowlist()))
 
-print("\n== 13. 日志健康检查 ==")
+print("\n== 15. 日志健康检查 ==")
 log2 = open(APP_LOG).read() + log1
 check("无 FATAL", "FATAL" not in log2)
 check("无未捕获异常", "UNCAUGHT" not in log2 and "Traceback" not in log2)

@@ -35,6 +35,18 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
         restoreStickers()
         statusItem.install(target: self)
         statusItem.updateToggleTitle(allHidden: store.allHidden)
+        statusItem.updatePinnedState(pinned: store.pinnedToDesktop)
+        statusItem.stickerListProvider = { [weak self] in
+            guard let self else { return [] }
+            return self.store.stickers.map { sticker in
+                let trimmed = sticker.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let body = trimmed.isEmpty ? "（空贴纸）" : String(trimmed.prefix(18))
+                return StatusItemController.StickerListEntry(
+                    id: sticker.id,
+                    title: "\(StickerStyles.style(id: sticker.styleID).name) · \(body)"
+                )
+            }
+        }
 
         if CommandLine.arguments.contains("--automation") {
             AutomationBridge.install(appController: self)
@@ -69,8 +81,32 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
         openComposer()
     }
 
+    @objc func newFromClipboardAction() {
+        guard let raw = NSPasteboard.general.string(forType: .string) else {
+            Log.warn("剪贴板没有可用的文本内容")
+            return
+        }
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            Log.warn("剪贴板没有可用的文本内容")
+            return
+        }
+        createSticker(text: String(text.prefix(2000)),
+                      styleID: StickerStyles.sticky.id, colorIndex: 0)
+    }
+
     @objc func toggleStickersVisibility() {
         setStickersHidden(!store.allHidden)
+    }
+
+    @objc func togglePinnedToDesktop() {
+        applyPinnedToDesktop(!store.pinnedToDesktop)
+    }
+
+    @objc func revealStickerAction(_ sender: NSMenuItem) {
+        guard let idString = sender.representedObject as? String,
+              let id = UUID(uuidString: idString) else { return }
+        revealSticker(id: id)
     }
 
     @objc func showAboutAction() {
@@ -86,8 +122,15 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
         if composer == nil {
             let controller = ComposerWindowController()
             controller.onCreate = { [weak self] text, styleID, colorIndex in
-                self?.createSticker(text: text, styleID: styleID, colorIndex: colorIndex,
-                                    paperTopLeftCG: nil, paperWidthOverride: nil)
+                guard let self else { return }
+                let sticker = self.createSticker(text: text, styleID: styleID, colorIndex: colorIndex,
+                                                 paperTopLeftCG: nil, paperWidthOverride: nil)
+                // 空贴纸创建后直接进入编辑，省掉一次双击。
+                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   !self.store.allHidden,
+                   let vc = self.controllers[sticker.id]?.viewController {
+                    vc.beginEditing()
+                }
             }
             composer = controller
         }
@@ -96,10 +139,17 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
 
     // MARK: - 贴纸协调
 
+    /// 应用级撤销管理器（见 StickerApplication）。编辑文字时 ⌘Z 优先命中
+    /// NSTextView 自己的撤销栈，这里的栈只覆盖结构性操作（删除/新建/复制）。
+    var undoManager: UndoManager? {
+        (NSApp as? StickerApplication)?.stickerUndoManager
+    }
+
     @discardableResult
     func createSticker(text: String, styleID: String, colorIndex: Int,
                        paperTopLeftCG: CGPoint? = nil,
-                       paperWidthOverride: CGFloat? = nil) -> Sticker {
+                       paperWidthOverride: CGFloat? = nil,
+                       registersUndo: Bool = true) -> Sticker {
         let style = StickerStyles.style(id: styleID)
         let width = paperWidthOverride.map { max(style.minWidth, min(style.maxWidth, $0)) } ?? style.defaultWidth
         let maxHeight = ScreenGeometry.primaryVisibleFrame().height * 0.85
@@ -130,17 +180,44 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
         )
         store.upsert(sticker)
         mount(sticker)
+        if registersUndo {
+            registerUndoDelete(sticker.id, actionName: "新建贴纸")
+        }
         Log.info("创建贴纸 \(sticker.id) style=\(style.id)")
         return sticker
+    }
+
+    /// 注册一条显式分组的撤销项：一次 ⌘Z 恰好撤销一步。
+    private func registerUndoAction(name: String, _ body: @escaping (AppController) -> Void) {
+        guard let undoManager else { return }
+        undoManager.beginUndoGrouping()
+        undoManager.setActionName(name)
+        undoManager.registerUndo(withTarget: self) { target in body(target) }
+        undoManager.endUndoGrouping()
+    }
+
+    /// 注册一条「删除该贴纸」的撤销项（新建/复制的反操作）。
+    private func registerUndoDelete(_ id: UUID, actionName: String) {
+        registerUndoAction(name: actionName) { target in
+            target.deleteSticker(id, animated: true)
+        }
     }
 
     private func mount(_ sticker: Sticker) {
         endEditingOthers(except: sticker.id)
         let controller = StickerWindowController(sticker: sticker, callbacks: makeCallbacks())
+        controller.panel.level = stickerLevel
         controllers[sticker.id] = controller
         if !store.allHidden {
             controller.panel.orderFrontRegardless()
         }
+    }
+
+    /// 贴纸窗口层级：悬浮（默认）或钉在桌面（普通窗口之下）。
+    private var stickerLevel: NSWindow.Level {
+        store.pinnedToDesktop
+            ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)))
+            : .floating
     }
 
     private func makeCallbacks() -> StickerViewController.Callbacks {
@@ -172,6 +249,12 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
             store.remove(id: id)
             return
         }
+        // 撤销支持：先快照完整模型，⌘Z 时原样恢复（位置/风格/缩放/字体都保留）。
+        if let snapshot = store.sticker(id: id) {
+            registerUndoAction(name: "删除贴纸") { target in
+                target.restoreSticker(snapshot)
+            }
+        }
         let perform = { [weak self] in
             controller.panel.orderOut(nil)
             self?.controllers[id] = nil
@@ -190,6 +273,17 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
         Log.info("删除贴纸 \(id)")
     }
 
+    /// 撤销「删除」：按删除前的完整状态恢复贴纸。
+    private func restoreSticker(_ sticker: Sticker) {
+        guard controllers[sticker.id] == nil else { return }
+        registerUndoAction(name: "恢复贴纸") { target in
+            target.deleteSticker(sticker.id, animated: true)
+        }
+        store.upsert(sticker)
+        store.moveToEnd(id: sticker.id)
+        mount(sticker)
+    }
+
     func duplicateSticker(_ id: UUID) {
         guard let source = store.sticker(id: id) else { return }
         let copy = Sticker(
@@ -200,12 +294,40 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
         )
         store.upsert(copy)
         mount(copy)
+        registerUndoDelete(copy.id, actionName: "复制贴纸")
     }
 
     func endEditingOthers(except id: UUID?) {
         for (key, controller) in controllers where key != id {
             controller.viewController.endEditing()
         }
+    }
+
+    // MARK: - 层级与定位
+
+    /// 切换「钉在桌面」模式：悬浮于所有窗口 ↔ 钉在桌面层（普通窗口之下）。
+    func applyPinnedToDesktop(_ pinned: Bool) {
+        store.setPinnedToDesktop(pinned)
+        let level = stickerLevel
+        for controller in controllers.values {
+            controller.panel.level = level
+        }
+        statusItem.updatePinnedState(pinned: pinned)
+        Log.info("贴纸层级切换 pinnedToDesktop=\(pinned)")
+    }
+
+    /// 定位贴纸：必要时拯救回屏幕，置前并闪烁提示（状态栏「贴纸列表」点击）。
+    func revealSticker(id: UUID) {
+        guard let controller = controllers[id] else { return }
+        if store.allHidden {
+            setStickersHidden(false)
+        }
+        let vc = controller.viewController
+        let rescued = ScreenGeometry.rescueFrame(vc.sticker.paperFrame)
+        let cg = ScreenGeometry.cgTopLeftRect(rescued)
+        vc.movePaperToCGTopLeft(CGPoint(x: cg.minX, y: cg.minY))
+        controller.panel.orderFrontRegardless()
+        vc.flashPanel()
     }
 
     func setStickersHidden(_ hidden: Bool) {
@@ -285,6 +407,7 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
             sticker.paperFrame = frame
             store.upsert(sticker)
             let controller = StickerWindowController(sticker: sticker, callbacks: makeCallbacks())
+            controller.panel.level = stickerLevel
             controllers[sticker.id] = controller
             if !store.allHidden {
                 controller.panel.orderFrontRegardless()
@@ -299,6 +422,11 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
 
     func snapshotData(id: UUID) -> Data? {
         controllers[id]?.viewController.snapshotPNGData()
+    }
+
+    /// 供自动化触发应用级撤销（等价于主菜单「撤销」）。
+    func performUndo() {
+        undoManager?.undo()
     }
 
     /// 临时调试辅助：按 id 取窗口控制器。
@@ -321,7 +449,8 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
                 visible: controller.panel.isVisible
             ))
         }
-        RuntimeStateDumper.write(allHidden: store.allHidden, entries: entries, to: url)
+        RuntimeStateDumper.write(allHidden: store.allHidden, pinnedToDesktop: store.pinnedToDesktop,
+                                 entries: entries, to: url)
     }
 }
 

@@ -39,11 +39,12 @@ enum RuntimeStateDumper {
 
     struct Dump: Codable {
         var allHidden: Bool
+        var pinnedToDesktop: Bool
         var stickers: [DumpSticker]
     }
 
     /// 把全部贴纸的运行时状态编码写入 url。
-    static func write(allHidden: Bool, entries: [Entry], to url: URL) {
+    static func write(allHidden: Bool, pinnedToDesktop: Bool, entries: [Entry], to url: URL) {
         let items = entries.map { entry in
             DumpSticker(
                 id: entry.sticker.id.uuidString,
@@ -60,7 +61,7 @@ enum RuntimeStateDumper {
                 visible: entry.visible
             )
         }
-        let dump = Dump(allHidden: allHidden, stickers: items)
+        let dump = Dump(allHidden: allHidden, pinnedToDesktop: pinnedToDesktop, stickers: items)
         if let data = try? JSONEncoder().encode(dump) {
             try? data.write(to: url)
         }
