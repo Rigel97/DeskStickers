@@ -19,6 +19,11 @@ swiftc -O Scripts/verification/windowlist.swift -o "$WORK/windowlist"
 echo "==> 隔离状态目录启动应用 (--automation --state-dir)"
 rm -rf "$WORK/home" "$WORK/state-home" "$WORK/app.log" "$WORK/state.json"
 mkdir -p "$WORK/home"
+# 按 --state-dir 参数精确匹配清理上次残留实例：
+# 用 pid 文件会在 pid 过期/复用时误杀无关进程（含用户正在用的正式版）。
+APP_PATTERN="DeskStickers --automation --state-dir $WORK/state-home"
+pkill -f "$APP_PATTERN" 2>/dev/null || true
+sleep 0.5
 HOME="$WORK/home" "$BIN" --automation --state-dir "$WORK/state-home" > "$WORK/app.log" 2>&1 &
 echo $! > "$WORK/app.pid"
 sleep 2
@@ -27,7 +32,7 @@ STATUS=0
 E2E_WORK="$WORK" DESKSTICKERS_BIN="$BIN" E2E_HOME="$WORK/home" E2E_STATE_DIR="$WORK/state-home" \
     python3 Scripts/verification/e2e_verify.py || STATUS=$?
 
-kill "$(cat "$WORK/app.pid")" 2>/dev/null || true
+pkill -f "$APP_PATTERN" 2>/dev/null || true
 if [ $STATUS -eq 0 ]; then
     echo "端到端回归通过 ✅"
 else

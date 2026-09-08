@@ -287,7 +287,12 @@ subprocess.Popen([APP_BIN, "--automation", "--state-dir", APP_STATE_DIR],
                  stdout=open(APP_LOG, "w"), stderr=subprocess.STDOUT,
                  env=env, start_new_session=True)
 time.sleep(2.5)
-new_pid = subprocess.run(["pgrep", "-n", "-x", "DeskStickers"], capture_output=True, text=True).stdout.strip()
+# 按 --state-dir 参数匹配新实例 pid：
+# pgrep -x DeskStickers 可能拿到用户正在运行的正式版实例。
+pgrep = subprocess.run(
+    ["pgrep", "-f", f"DeskStickers --automation --state-dir {APP_STATE_DIR}"],
+    capture_output=True, text=True).stdout.split()
+new_pid = pgrep[-1] if pgrep else ""
 open(APP_PID_FILE, "w").write(new_pid)
 
 after = dump(timeout=8)
