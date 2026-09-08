@@ -21,18 +21,29 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
     let catcher = InteractionCatcherView(frame: .zero)
     let leftEdge = PaperEdgeView(frame: .zero)
     let rightEdge = PaperEdgeView(frame: .zero)
+    let bottomEdge = PaperEdgeView(frame: .zero)
     let grip = ResizeGripView(frame: .zero)
     let toolbar = CapsuleToolbar(frame: .zero)
+
+    /// 缩放手势的模式：由被拖动的区域（与 ⌥ 修饰键）决定。
+    private enum ResizeMode {
+        /// 左右边缘：仅调宽（左缘锚定右缘，右缘锚定左缘）。
+        case widthOnly(anchorsRight: Bool)
+        /// 底部边缘：仅调高，进入固定高度模式。
+        case heightOnly
+        /// 角落手柄默认：宽高独立自由调整。
+        case freeCorner
+        /// 角落手柄 + ⌥：等比缩放（宽高 + 字号）。
+        case proportional
+    }
 
     private(set) var isEditing = false
     private var isPopoverVisible = false
     private var isMouseInside = false
+    private var resizeMode: ResizeMode = .widthOnly(anchorsRight: false)
     private var resizeStartPaperWidth: CGFloat?
+    private var resizeStartPaperHeight: CGFloat?
     private var resizeStartPaperMaxX: CGFloat?
-    /// 左缘拖动时锚定右缘（纸面向左生长），其余情况锚定左缘。
-    private var resizeAnchorsRight = false
-    /// 角落手柄拖动 = 等比缩放（宽高 + 字号）；左右边缘 = 仅调宽。
-    private var resizeProportional = false
     private var resizeStartScale: Double = 1.0
 
     private lazy var stylePopover = StylePickerPopover()
@@ -99,16 +110,26 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
         catcher.onDragEnded = { [weak self] in self?.commitWindowFrame(interacted: true) }
         catcher.onContextMenu = { [weak self] _ in self?.presentContextMenu() }
 
-        // 缩放手柄（右下角 = 等比缩放：宽高与字号同步变化）
-        grip.onResizeDelta = { [weak self] delta in self?.handleResizeDelta(delta) }
+        // 缩放手柄（右下角）：默认自由调整宽高，⌥ 拖动等比缩放（含字号）
+        grip.toolTip = "拖动调整宽高 · 按住 ⌥ 拖动等比缩放（含字号）"
+        grip.onResizeDelta = { [weak self] dx, dy, option in
+            self?.handleResizeDelta(dx: dx, dy: dy,
+                                    mode: option ? .proportional : .freeCorner)
+        }
         grip.onResizeEnded = { [weak self] in self?.handleResizeEnded() }
-        grip.onResizeStart = { [weak self] in self?.handleResizeStart(anchorsRight: false, proportional: true) }
+        grip.onResizeStart = { [weak self] in self?.handleResizeStart() }
 
-        // 左右边缘缩放区（不依赖悬停，始终可命中，仅调整宽度）
-        for (edge, side) in [(leftEdge, PaperEdgeView.Side.left), (rightEdge, PaperEdgeView.Side.right)] {
+        // 边缘缩放区（不依赖悬停，始终可命中）：左右 = 调宽，底部 = 调高
+        for (edge, side, mode) in [
+            (leftEdge, PaperEdgeView.Side.left, ResizeMode.widthOnly(anchorsRight: true)),
+            (rightEdge, PaperEdgeView.Side.right, ResizeMode.widthOnly(anchorsRight: false)),
+            (bottomEdge, PaperEdgeView.Side.bottom, ResizeMode.heightOnly),
+        ] {
             edge.side = side
-            edge.onResizeStart = { [weak self] in self?.handleResizeStart(anchorsRight: side == .left, proportional: false) }
-            edge.onResizeDelta = { [weak self] delta in self?.handleResizeDelta(delta) }
+            edge.onResizeStart = { [weak self] in self?.handleResizeStart(mode: mode) }
+            edge.onResizeDelta = { [weak self] dx, dy in
+                self?.handleResizeDelta(dx: dx, dy: dy, mode: mode)
+            }
             edge.onResizeEnded = { [weak self] in self?.handleResizeEnded() }
         }
 
@@ -131,6 +152,7 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
         canvas.addSubview(catcher)
         canvas.addSubview(leftEdge)
         canvas.addSubview(rightEdge)
+        canvas.addSubview(bottomEdge)
         canvas.addSubview(grip)
         canvas.addSubview(toolbar)
 
@@ -174,10 +196,11 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
         scrollView.verticalScroller?.scrollerStyle = .overlay
 
         catcher.frame = paper
-        // 左右边缘缩放条：纸面内侧 7pt，始终可命中（右下角手柄在其上层）
+        // 边缘缩放条：纸面内侧 7pt，始终可命中（右下角手柄在最上层）
         let edgeThickness: CGFloat = 7
         leftEdge.frame = NSRect(x: paper.minX, y: paper.minY, width: edgeThickness, height: paper.height)
         rightEdge.frame = NSRect(x: paper.maxX - edgeThickness, y: paper.minY, width: edgeThickness, height: paper.height)
+        bottomEdge.frame = NSRect(x: paper.minX, y: paper.maxY - edgeThickness, width: paper.width, height: edgeThickness)
         let gripSize: CGFloat = 18
         grip.frame = NSRect(x: paper.maxX - gripSize, y: paper.maxY - gripSize, width: gripSize, height: gripSize)
         let toolbarSize = toolbar.intrinsicContentSize
@@ -234,13 +257,20 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
     }
 
     /// 重新计算纸面高度（顶边锚定），必要时调整窗口。
+    /// 固定高度模式下保持用户设定的高度不变。
     func refreshLayout(animate: Bool = false) {
         let oldPaper = sticker.paperFrame
         let maxHeight = maxAllowedPaperHeight()
-        let newHeight = StickerTextEngine.paperHeight(
-            for: sticker.text, style: style, colorIndex: sticker.colorIndex,
-            paperWidth: oldPaper.width, maxHeight: maxHeight
-        )
+        let newHeight: CGFloat
+        if let fixed = clampedOverrideHeight() {
+            newHeight = fixed
+            sticker.heightOverride = Double(fixed)
+        } else {
+            newHeight = StickerTextEngine.paperHeight(
+                for: sticker.text, style: style, colorIndex: sticker.colorIndex,
+                paperWidth: oldPaper.width, maxHeight: maxHeight
+            )
+        }
         if abs(newHeight - oldPaper.height) > 0.5 {
             var paper = oldPaper
             paper.size.height = newHeight
@@ -400,53 +430,107 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
         commitModel()
     }
 
+    /// 外部设定纸面高度（进入固定高度模式；顶边锚定）。
+    func setPaperHeightExternal(_ height: CGFloat) {
+        applyPaperHeight(height)
+        commitModel()
+    }
+
     private func applyPaperWidth(_ rawWidth: CGFloat, anchorsRight: Bool) {
-        let width = max(style.minWidth, min(style.maxWidth, rawWidth))
-        let maxHeight = maxAllowedPaperHeight()
-        let height = StickerTextEngine.paperHeight(
-            for: sticker.text, style: style, colorIndex: sticker.colorIndex,
-            paperWidth: width, maxHeight: maxHeight
-        )
+        applyPaperSize(width: rawWidth, height: nil, anchorsRight: anchorsRight)
+    }
+
+    /// 纸面最小高度（约两行文字 + 上下留白，与自动模式的最小值一致）。
+    private var minPaperHeight: CGFloat {
+        style.minHeight(forTextHeight: 0)
+    }
+
+    /// 固定高度模式下生效的高度（钳制到 [min, max]）。
+    private func clampedOverrideHeight() -> CGFloat? {
+        guard let override = sticker.heightOverride else { return nil }
+        return max(minPaperHeight, min(maxAllowedPaperHeight(), CGFloat(override)))
+    }
+
+    /// 设置纸面尺寸。height 传 nil = 按文字内容自适应（或沿用已固定的高度）。
+    /// 顶边锚定（向下生长/收缩）。
+    private func applyPaperSize(width rawWidth: CGFloat?, height rawHeight: CGFloat?, anchorsRight: Bool = false) {
         var paper = sticker.paperFrame
-        paper.origin.y = paper.maxY - height
-        if anchorsRight, let maxX = resizeStartPaperMaxX {
-            paper.origin.x = maxX - width
+        let oldTop = paper.maxY
+        if let rawWidth {
+            paper.size.width = max(style.minWidth, min(style.maxWidth, rawWidth))
         }
-        paper.size = CGSize(width: width, height: height)
+        if let rawHeight {
+            // 显式给定高度 = 进入固定高度模式
+            let height = max(minPaperHeight, min(maxAllowedPaperHeight(), rawHeight))
+            sticker.heightOverride = Double(height)
+            paper.size.height = height
+        } else if let fixed = clampedOverrideHeight() {
+            paper.size.height = fixed
+        } else {
+            paper.size.height = StickerTextEngine.paperHeight(
+                for: sticker.text, style: style, colorIndex: sticker.colorIndex,
+                paperWidth: paper.width, maxHeight: maxAllowedPaperHeight()
+            )
+        }
+        paper.origin.y = oldTop - paper.size.height
+        if anchorsRight, let maxX = resizeStartPaperMaxX {
+            paper.origin.x = maxX - paper.size.width
+        }
         sticker.paperFrame = paper
         setWindowFrame(fromPaperFrame: paper, animate: false)
         view.needsLayout = true
     }
 
+    /// 仅调整纸面高度（底部边缘拖动）。
+    private func applyPaperHeight(_ rawHeight: CGFloat) {
+        applyPaperSize(width: nil, height: rawHeight)
+    }
+
+    /// 恢复高度自适应（右键菜单「恢复自动高度」）。
+    func resetPaperHeightAuto() {
+        sticker.heightOverride = nil
+        refreshLayout()
+        commitModel()
+    }
+
     // MARK: - 拖动 / 缩放手势
 
-    private func handleResizeStart(anchorsRight: Bool, proportional: Bool) {
+    private func handleResizeStart(mode: ResizeMode = .freeCorner) {
+        resizeMode = mode
         resizeStartPaperWidth = sticker.paperFrame.width
+        resizeStartPaperHeight = sticker.paperFrame.height
         resizeStartPaperMaxX = sticker.paperFrame.maxX
-        resizeAnchorsRight = anchorsRight
-        resizeProportional = proportional
         resizeStartScale = sticker.scale
     }
 
-    private func handleResizeDelta(_ delta: CGFloat) {
-        if resizeProportional {
-            // 角落手柄：按拖出的宽度比例缩放整体（字号、内边距、宽高一起变）。
+    /// 处理缩放拖动增量（屏幕坐标系：dx 向右为正，dy 向上为正）。
+    private func handleResizeDelta(dx: CGFloat, dy: CGFloat, mode: ResizeMode) {
+        switch mode {
+        case .widthOnly(let anchorsRight):
+            let startWidth = resizeStartPaperWidth ?? sticker.paperFrame.width
+            let rawWidth = anchorsRight ? startWidth - dx : startWidth + dx
+            applyPaperWidth(rawWidth, anchorsRight: anchorsRight)
+        case .heightOnly:
+            // 屏幕坐标 y 向上，向下拖（dy < 0）= 变高
+            let startHeight = resizeStartPaperHeight ?? sticker.paperFrame.height
+            applyPaperHeight(startHeight - dy)
+        case .freeCorner:
+            let startWidth = resizeStartPaperWidth ?? sticker.paperFrame.width
+            let startHeight = resizeStartPaperHeight ?? sticker.paperFrame.height
+            applyPaperSize(width: startWidth + dx, height: startHeight - dy)
+        case .proportional:
+            // ⌥ + 角落手柄：按拖出的宽度比例缩放整体（字号、内边距、宽高一起变）。
             let startWidth = resizeStartPaperWidth ?? sticker.paperFrame.width
             guard startWidth > 1 else { return }
-            let factor = (startWidth + delta) / startWidth
+            let factor = (startWidth + dx) / startWidth
             applyPaperScale(resizeStartScale * Double(factor), anchorsRight: false, commit: false)
-        } else {
-            let startWidth = resizeStartPaperWidth ?? sticker.paperFrame.width
-            let rawWidth = resizeAnchorsRight ? startWidth - delta : startWidth + delta
-            applyPaperWidth(rawWidth, anchorsRight: resizeAnchorsRight)
         }
     }
 
     private func handleResizeEnded() {
         resizeStartPaperWidth = nil
+        resizeStartPaperHeight = nil
         resizeStartPaperMaxX = nil
-        resizeAnchorsRight = false
-        resizeProportional = false
         commitModel()
         callbacks.onInteracted(sticker)
     }
@@ -466,6 +550,10 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
                 paper.origin.x = maxX - paper.size.width
             }
             sticker.paperFrame = paper
+            // 固定高度跟随等比缩放
+            if let fixed = sticker.heightOverride {
+                sticker.heightOverride = fixed * ratio
+            }
         }
         refreshTextAppearance(commit: commit)
     }
@@ -611,6 +699,11 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
         duplicateItem.target = self
         menu.addItem(duplicateItem)
 
+        let resetHeight = NSMenuItem(title: "恢复自动高度", action: #selector(resetHeightMenuAction), keyEquivalent: "")
+        resetHeight.target = self
+        resetHeight.isEnabled = sticker.heightOverride != nil
+        menu.addItem(resetHeight)
+
         menu.addItem(NSMenuItem.separator())
 
         let deleteItem = NSMenuItem(title: "删除贴纸", action: #selector(deleteMenuAction), keyEquivalent: "")
@@ -635,6 +728,7 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
     @objc private func fontSizeDecreaseAction() { adjustFontSize(by: -2) }
     @objc private func fontSizeResetAction() { applyFontSize(nil) }
     @objc private func duplicateMenuAction() { callbacks.onDuplicate(sticker) }
+    @objc private func resetHeightMenuAction() { resetPaperHeightAuto() }
     @objc private func deleteMenuAction() { callbacks.onDelete(sticker) }
 
     /// 右键菜单里可选的字体族（PostScript 名）。

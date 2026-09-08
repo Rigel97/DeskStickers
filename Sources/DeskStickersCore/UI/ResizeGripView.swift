@@ -1,14 +1,15 @@
 import AppKit
 
-/// 右下角缩放手柄：拖动改变纸面宽度（高度随文字自适应）。
+/// 右下角缩放手柄：默认拖动自由调整宽高，按住 ⌥ 拖动等比缩放（含字号）。
 final class ResizeGripView: NSView {
 
-    /// 拖动过程中的水平位移（向右为正），由控制器换算为新的纸面宽度。
-    var onResizeDelta: ((CGFloat) -> Void)?
+    /// 拖动过程中的位移（屏幕坐标增量，向右/向上为正）与 ⌥ 修饰键状态，
+    /// 由控制器换算为新的纸面尺寸 / 缩放系数。
+    var onResizeDelta: ((CGFloat, CGFloat, Bool) -> Void)?
     var onResizeStart: (() -> Void)?
     var onResizeEnded: (() -> Void)?
 
-    private var dragStartX: CGFloat?
+    private var dragStart: CGPoint?
     private var didResize = false
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -33,21 +34,22 @@ final class ResizeGripView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         window?.orderFront(nil)
-        dragStartX = NSEvent.mouseLocation.x
+        dragStart = NSEvent.mouseLocation
         didResize = false
         onResizeStart?()
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let start = dragStartX else { return }
-        let delta = NSEvent.mouseLocation.x - start
-        if abs(delta) > 1 { didResize = true }
-        onResizeDelta?(delta)
+        guard let start = dragStart else { return }
+        let current = NSEvent.mouseLocation
+        let delta = CGPoint(x: current.x - start.x, y: current.y - start.y)
+        if abs(delta.x) > 1 || abs(delta.y) > 1 { didResize = true }
+        onResizeDelta?(delta.x, delta.y, event.modifierFlags.contains(.option))
     }
 
     override func mouseUp(with event: NSEvent) {
-        let wasResizing = dragStartX != nil
-        dragStartX = nil
+        let wasResizing = dragStart != nil
+        dragStart = nil
         if wasResizing, didResize {
             onResizeEnded?()
         }

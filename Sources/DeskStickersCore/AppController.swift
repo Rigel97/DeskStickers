@@ -290,7 +290,8 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
             text: source.text, styleID: source.styleID, colorIndex: source.colorIndex,
             paperX: source.paperX + 28, paperY: max(ScreenGeometry.primaryVisibleFrame().minY + 20, source.paperY - 28),
             width: source.width, height: source.height,
-            scale: source.scale, fontName: source.fontName, fontSize: source.fontSize
+            scale: source.scale, heightOverride: source.heightOverride,
+            fontName: source.fontName, fontSize: source.fontSize
         )
         store.upsert(copy)
         mount(copy)
@@ -388,21 +389,35 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
         mutate(id) { $0.setPaperWidthExternal(paperWidth) }
     }
 
+    /// 设定纸面高度（nil = 恢复自动高度）。
+    func setHeight(id: UUID, height: CGFloat?) {
+        mutate(id) { vc in
+            if let height {
+                vc.setPaperHeightExternal(height)
+            } else {
+                vc.resetPaperHeightAuto()
+            }
+        }
+    }
+
     // MARK: - 恢复
 
     private func restoreStickers() {
         for stored in store.stickers {
             var sticker = stored
             var frame = ScreenGeometry.rescueFrame(sticker.paperFrame)
-            let style = stored.effectiveStyle()
-            let maxHeight = ScreenGeometry.primaryVisibleFrame().height * 0.85
-            let recomputed = StickerTextEngine.paperHeight(
-                for: sticker.text, style: style, colorIndex: sticker.colorIndex,
-                paperWidth: frame.width, maxHeight: maxHeight
-            )
-            if abs(recomputed - frame.height) > 1 {
-                frame.origin.y = frame.maxY - recomputed
-                frame.size.height = recomputed
+            if stored.heightOverride == nil {
+                // 自动高度模式：按当前字体环境重算（字体缺失等会导致偏差）
+                let style = stored.effectiveStyle()
+                let maxHeight = ScreenGeometry.primaryVisibleFrame().height * 0.85
+                let recomputed = StickerTextEngine.paperHeight(
+                    for: sticker.text, style: style, colorIndex: sticker.colorIndex,
+                    paperWidth: frame.width, maxHeight: maxHeight
+                )
+                if abs(recomputed - frame.height) > 1 {
+                    frame.origin.y = frame.maxY - recomputed
+                    frame.size.height = recomputed
+                }
             }
             sticker.paperFrame = frame
             store.upsert(sticker)

@@ -30,6 +30,7 @@ final class AutomationBridge: NSObject {
             ("create", #selector(handleCreate)),
             ("move", #selector(handleMove)),
             ("resize", #selector(handleResize)),
+            ("setHeight", #selector(handleSetHeight)),
             ("setStyle", #selector(handleSetStyle)),
             ("setText", #selector(handleSetText)),
             ("setScale", #selector(handleSetScale)),
@@ -97,6 +98,21 @@ final class AutomationBridge: NSObject {
         guard let id = stickerID(note),
               let width = Double(info(note)["width"] ?? "") else { return }
         appController.resizeSticker(id: id, paperWidth: CGFloat(width))
+    }
+
+    /// 设定纸面高度；height 传 "-" 恢复自动高度。
+    @objc private func handleSetHeight(_ note: Notification) {
+        guard let id = stickerID(note),
+              let raw = info(note)["height"] else { return }
+        let height: CGFloat?
+        if raw == "-" {
+            height = nil
+        } else if let value = Double(raw) {
+            height = CGFloat(value)
+        } else {
+            return
+        }
+        appController.setHeight(id: id, height: height)
     }
 
     @objc private func handleSetStyle(_ note: Notification) {
@@ -218,11 +234,11 @@ final class AutomationBridge: NSObject {
             let maxY = NSScreen.screens.first?.frame.maxY ?? 0
             CGWarpMouseCursorPosition(CGPoint(x: p.x, y: maxY - p.y))
         }
-        func send(_ type: NSEvent.EventType, atScreenPoint p: CGPoint) {
+        func send(_ type: NSEvent.EventType, atScreenPoint p: CGPoint, modifiers: NSEvent.ModifierFlags = []) {
             let locationInWindow = panel.convertFromScreen(NSRect(origin: p, size: .zero)).origin
             guard let event = NSEvent.mouseEvent(
                 with: type, location: locationInWindow,
-                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: panel.windowNumber, context: nil,
                 eventNumber: 0, clickCount: 1, pressure: type == .pressure ? 1 : 0
             ) else { return }
@@ -244,6 +260,7 @@ final class AutomationBridge: NSObject {
         switch info(note)["target"] {
         case "left": target = vc.leftEdge
         case "right": target = vc.rightEdge
+        case "bottom": target = vc.bottomEdge
         default: target = grip
         }
         let targetInCanvas = target.frame
@@ -260,14 +277,20 @@ final class AutomationBridge: NSObject {
         }
         Log.info("gripDrag: target=\(type(of: target)) isHidden=\(target.isHidden) alpha=\(target.alphaValue) frame=\(target.frame) 位置=\(targetOnScreen)")
 
-        // 2) 按下 → 拖动 → 松开
+        // 2) 按下 → 拖动 → 松开（dy 为屏幕坐标纵向位移，向上为正；可带 ⌥ 修饰键）
+        let dy = Double(info(note)["dy"] ?? "") ?? 0
+        let optionHeld = info(note)["option"] == "1"
+        let modifiers: NSEvent.ModifierFlags = optionHeld ? .option : []
         send(.leftMouseDown, atScreenPoint: targetOnScreen)
         runloopTick(0.1)
-        let end = CGPoint(x: targetOnScreen.x + CGFloat(dx), y: targetOnScreen.y)
+        let end = CGPoint(x: targetOnScreen.x + CGFloat(dx), y: targetOnScreen.y + CGFloat(dy))
         for i in 1...10 {
-            let p = CGPoint(x: targetOnScreen.x + (end.x - targetOnScreen.x) * CGFloat(i) / 10, y: targetOnScreen.y)
+            let p = CGPoint(
+                x: targetOnScreen.x + (end.x - targetOnScreen.x) * CGFloat(i) / 10,
+                y: targetOnScreen.y + (end.y - targetOnScreen.y) * CGFloat(i) / 10
+            )
             warp(p)
-            send(.leftMouseDragged, atScreenPoint: p)
+            send(.leftMouseDragged, atScreenPoint: p, modifiers: modifiers)
             runloopTick(0.03)
         }
         send(.leftMouseUp, atScreenPoint: end)

@@ -270,6 +270,49 @@ check("allHidden = false", state["allHidden"] is False)
 time.sleep(0.5)
 check("窗口全部恢复", len(windowlist()) == 7, str(len(windowlist())))
 
+print("\n== 11b. 自由调整高度（鼠标事件路径）==")
+
+
+def sticker_by_id(st, sid):
+    return next((s for s in st["stickers"] if s["id"] == sid), None)
+
+
+# 注意：拖动结束会触发 onInteracted → moveToEnd，列表顺序会变，必须按 id 跟踪。
+sid2 = state["stickers"][0]["id"]
+base_w, base_h = rect_of(state["stickers"][0])[2], rect_of(state["stickers"][0])[3]
+base_top = rect_of(state["stickers"][0])[1]
+# 底部边缘向下拖 80pt（dy=-80）→ 高度 +80，宽度与顶边不变
+dn("gripDrag", id=sid2, target="bottom", dx="0", dy="-80")
+state = dump()
+s2 = sticker_by_id(state, sid2)
+x2, y2, w2, h2 = rect_of(s2)
+check("底部边缘拖动：高度 +80", near(h2, base_h + 80, 3), f"{h2} vs {base_h}")
+check("宽度不变", near(w2, base_w), f"{w2}")
+check("顶边锚定", near(y2, base_top), f"{y2}")
+check("进入固定高度模式", s2.get("heightOverride") is not None)
+# 角落手柄自由拖 (+60, -40) → 宽 +60 高 +40
+dn("gripDrag", id=sid2, target="grip", forceShow="1", dx="60", dy="-40")
+state = dump()
+s3 = sticker_by_id(state, sid2)
+x3, y3, w3, h3 = rect_of(s3)
+check("角落自由拖：宽 +60 高 +40", near(w3, w2 + 60, 3) and near(h3, h2 + 40, 3), f"({w3},{h3}) vs ({w2},{h2})")
+# ⌥ + 角落拖 = 等比缩放（宽高同步，scale 变化）
+scale_before = s3["scale"]
+dn("gripDrag", id=sid2, target="grip", forceShow="1", option="1", dx="60", dy="0")
+state = dump()
+s4 = sticker_by_id(state, sid2)
+x4, y4, w4, h4 = rect_of(s4)
+scale_after = s4["scale"]
+check("⌥ 拖动等比：宽度 +60", near(w4, w3 + 60, 3), f"{w4} vs {w3 + 60}")
+check("⌥ 拖动等比：高度按比例跟随（dy=0 仍变高）", near(h4, h3 * (w3 + 60) / w3, 3), f"{h4} vs {h3 * (w3 + 60) / w3:.1f}")
+check("⌥ 拖动等比：scale 同步变化", scale_after > scale_before, f"{scale_before} -> {scale_after}")
+# 恢复自动高度
+dn("setHeight", id=sid2, height="-")
+state = dump()
+s5 = sticker_by_id(state, sid2)
+check("恢复自动高度（override 清空）", s5.get("heightOverride") is None)
+check("高度回到自适应", not near(rect_of(s5)[3], h4), f"{rect_of(s5)[3]} vs {h4}")
+
 print("\n== 12. 撤销删除（⌘Z 行为）==")
 state = dump()
 target = state["stickers"][0]

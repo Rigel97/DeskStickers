@@ -9,9 +9,11 @@
 - **8 种手绘风格**：便利贴、笔记本、手写、极简、复古、黑板、可爱、等宽——每种自带纸张纹理、阴影与配色变体
 - **自由摆放**：拖动贴纸到任意位置，悬浮于普通窗口之上，跨 Space 常驻
 - **钉在桌面**：一键切换层级模式——贴纸沉到桌面层，不再遮挡正在使用的窗口
-- **两种缩放**：
-  - 右下角手柄 = 等比缩放，宽高、字号、内边距同步变化（0.4×–2.5×）
-  - 纸面左右边缘 = 仅调整宽度，文字自动重排
+- **自由调整长宽**：
+  - 右下角手柄 = 自由拖动，宽高独立调整
+  - 按住 ⌥ 拖动右下角手柄 = 等比缩放，宽高、字号、内边距同步变化（0.4×–2.5×）
+  - 左右边缘 = 仅调整宽度，文字自动重排
+  - 底部边缘 = 仅调整高度（进入固定高度模式，文字超出自动出现滚动条；右键菜单可恢复自动高度）
 - **字体调整**：右键菜单可切换字体族（苹方/宋体/楷体/圆体/黑体/等宽）与字号
 - **就地编辑**：双击或点工具栏进入编辑，Esc 结束；高度随内容自适应；新建空贴纸后直接进入输入
 - **撤销支持**：删除 / 新建 / 复制均可 ⌘Z 撤销（编辑文字时 ⌘Z 仍是文本撤销）
@@ -81,8 +83,8 @@ Scripts/
 ## 自动化接口
 
 以 `--automation` 启动后监听 `com.deskstickers.automation.<action>` 分布式通知，
-支持 create / move / resize / setStyle / setText / setScale / setFont / delete /
-undo / setPinned / reveal / snapshot / dump 等动作，供 e2e 与调试工具
+支持 create / move / resize / setHeight / setStyle / setText / setScale / setFont /
+delete / undo / setPinned / reveal / snapshot / dump 等动作，供 e2e 与调试工具
 （`Scripts/verification/dnctl.swift`）使用。
 
 ## 许可

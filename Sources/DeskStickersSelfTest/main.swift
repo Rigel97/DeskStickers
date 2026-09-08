@@ -178,7 +178,7 @@ test("存储-moveToEnd 调整层级顺序") {
 test("存储-JSON 字段名稳定") {
     let sticker = Sticker(text: "字段稳定性", styleID: "blackboard", colorIndex: 2,
                           paperX: 10.5, paperY: 20.5, width: 250, height: 180,
-                          scale: 1.2, fontName: "SongtiSC-Regular", fontSize: 16)
+                          scale: 1.2, heightOverride: 160, fontName: "SongtiSC-Regular", fontSize: 16)
     let json = try JSONEncoder().encode(StickerStoreSnapshot(stickers: [sticker]))
     let text = String(data: json, encoding: .utf8) ?? ""
     expect(text.contains("\"style\""), "字段名应为 style")
@@ -188,6 +188,7 @@ test("存储-JSON 字段名稳定") {
     expect(text.contains("\"width\""))
     expect(text.contains("\"height\""))
     expect(text.contains("\"scale\""))
+    expect(text.contains("\"heightOverride\""))
     expect(text.contains("\"fontName\""))
     expect(text.contains("\"fontSize\""))
 }
@@ -235,6 +236,7 @@ test("缩放-旧版 JSON 缺字段回退默认值") {
     var object = try JSONSerialization.jsonObject(with: json) as! [String: Any]
     var stickers = object["stickers"] as! [[String: Any]]
     stickers[0].removeValue(forKey: "scale")
+    stickers[0].removeValue(forKey: "heightOverride")
     stickers[0].removeValue(forKey: "fontName")
     stickers[0].removeValue(forKey: "fontSize")
     object["stickers"] = stickers
@@ -242,6 +244,7 @@ test("缩放-旧版 JSON 缺字段回退默认值") {
     let decoded = try JSONDecoder().decode(StickerStoreSnapshot.self, from: legacy)
     let restored = decoded.stickers[0]
     expect(restored.scale == 1.0, "scale 默认 1.0")
+    expect(restored.heightOverride == nil, "heightOverride 默认 nil")
     expect(restored.fontName == nil, "fontName 默认 nil")
     expect(restored.fontSize == nil, "fontSize 默认 nil")
     expect(restored.text == "兼容", "其余字段不受影响")

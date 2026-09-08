@@ -27,6 +27,7 @@ enum RuntimeStateDumper {
         var style: String
         var colorIndex: Int
         var scale: Double
+        var heightOverride: Double?
         var fontName: String?
         var fontSize: Double?
         var paper: CGRect
@@ -52,6 +53,7 @@ enum RuntimeStateDumper {
                 style: entry.sticker.styleID,
                 colorIndex: entry.sticker.colorIndex,
                 scale: entry.sticker.scale,
+                heightOverride: entry.sticker.heightOverride,
                 fontName: entry.sticker.fontName,
                 fontSize: entry.sticker.fontSize,
                 paper: entry.paper,

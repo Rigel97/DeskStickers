@@ -20,6 +20,9 @@ public struct Sticker: Codable, Equatable, Identifiable {
     public var height: Double
     /// 整体缩放系数（1.0 = 原始大小）。作用于字号、内边距、阴影与宽高。
     public var scale: Double
+    /// 纸面高度覆盖（pt，nil = 高度跟随文字内容自适应）。
+    /// 用户拖动底部边缘/角落后固定，右键菜单可恢复自动。
+    public var heightOverride: Double?
     /// 字体族覆盖（PostScript 名，nil = 跟随风格）。
     public var fontName: String?
     /// 字号覆盖（pt，nil = 跟随风格与缩放）。
@@ -37,6 +40,7 @@ public struct Sticker: Codable, Equatable, Identifiable {
         width: Double,
         height: Double,
         scale: Double = 1.0,
+        heightOverride: Double? = nil,
         fontName: String? = nil,
         fontSize: Double? = nil,
         createdAt: Date = Date(),
@@ -51,6 +55,7 @@ public struct Sticker: Codable, Equatable, Identifiable {
         self.width = width
         self.height = height
         self.scale = scale
+        self.heightOverride = heightOverride
         self.fontName = fontName
         self.fontSize = fontSize
         self.createdAt = createdAt
@@ -79,10 +84,10 @@ public struct Sticker: Codable, Equatable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, text, styleID = "style", colorIndex, paperX, paperY, width, height
-        case scale, fontName, fontSize, createdAt, updatedAt
+        case scale, heightOverride, fontName, fontSize, createdAt, updatedAt
     }
 
-    /// 旧版本状态文件没有 scale/fontName/fontSize 字段，解码时取默认值。
+    /// 旧版本状态文件没有 scale/heightOverride/fontName/fontSize 字段，解码时取默认值。
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -94,6 +99,7 @@ public struct Sticker: Codable, Equatable, Identifiable {
         width = try c.decode(Double.self, forKey: .width)
         height = try c.decode(Double.self, forKey: .height)
         scale = try c.decodeIfPresent(Double.self, forKey: .scale) ?? 1.0
+        heightOverride = try c.decodeIfPresent(Double.self, forKey: .heightOverride)
         fontName = try c.decodeIfPresent(String.self, forKey: .fontName)
         fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize)
         createdAt = try c.decode(Date.self, forKey: .createdAt)
