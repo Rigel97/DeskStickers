@@ -1,15 +1,17 @@
 import AppKit
 
-/// 应用控制器：NSApplication 代理 + 贴纸协调器 + 菜单/状态项。
-final class AppController: NSObject, NSApplicationDelegate {
+/// 应用控制器：NSApplication 代理 + 贴纸协调器。
+///
+/// 职责边界：菜单/状态栏装配在 AppMenu.swift（AppMenuFactory / StatusItemController），
+/// 运行时状态导出在 RuntimeStateDumper.swift——本类只保留贴纸生命周期协调。
+final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
 
     static let shared = AppController()
 
     let store: StickerStore
+    let statusItem = StatusItemController()
     private var controllers: [UUID: StickerWindowController] = [:]
     private var composer: ComposerWindowController?
-    private var statusItem: NSStatusItem?
-    private var hideToggleMenuItem: NSMenuItem?
 
     override private init() {
         // --state-dir <path>：覆盖状态目录（自动化/e2e 用真实隔离目录——
@@ -31,8 +33,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         Log.info("桌面贴纸启动 (stickers=\(store.stickers.count), firstLaunch=\(store.isFirstLaunch))")
 
         restoreStickers()
-        setupStatusItem()
-        updateHideToggleTitle()
+        statusItem.install(target: self)
+        statusItem.updateToggleTitle(allHidden: store.allHidden)
 
         if CommandLine.arguments.contains("--automation") {
             AutomationBridge.install(appController: self)
@@ -61,55 +63,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         false
     }
 
-    // MARK: - 主菜单
-
-    static func makeMainMenu() -> NSMenu {
-        let mainMenu = NSMenu()
-
-        let appMenuItem = NSMenuItem()
-        let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "关于桌面贴纸", action: #selector(showAboutAction), keyEquivalent: "")
-        appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: "隐藏桌面贴纸", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        let hideOthers = NSMenuItem(title: "隐藏其他", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
-        hideOthers.keyEquivalentModifierMask = [.command, .option]
-        appMenu.addItem(hideOthers)
-        appMenu.addItem(withTitle: "显示全部", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
-        appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: "退出桌面贴纸", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        appMenuItem.submenu = appMenu
-        mainMenu.addItem(appMenuItem)
-
-        let fileMenuItem = NSMenuItem()
-        let fileMenu = NSMenu(title: "文件")
-        fileMenu.addItem(withTitle: "新建贴纸", action: #selector(newStickerAction), keyEquivalent: "n")
-        fileMenuItem.submenu = fileMenu
-        mainMenu.addItem(fileMenuItem)
-
-        let editMenuItem = NSMenuItem()
-        let editMenu = NSMenu(title: "编辑")
-        editMenu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
-        editMenu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
-        editMenu.addItem(NSMenuItem.separator())
-        editMenu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "全选", action: #selector(NSResponder.selectAll(_:)), keyEquivalent: "a")
-        editMenuItem.submenu = editMenu
-        mainMenu.addItem(editMenuItem)
-
-        let stickerMenuItem = NSMenuItem()
-        let stickerMenu = NSMenu(title: "贴纸")
-        stickerMenu.addItem(withTitle: "显示/隐藏全部贴纸", action: #selector(toggleStickersVisibility), keyEquivalent: "\\")
-        stickerMenuItem.submenu = stickerMenu
-        mainMenu.addItem(stickerMenuItem)
-
-        let shared = AppController.shared
-        shared.hideToggleMenuItem = stickerMenu.items.first
-        return mainMenu
-    }
-
-    // MARK: - 菜单动作
+    // MARK: - 菜单动作（AppMenuActions）
 
     @objc func newStickerAction() {
         openComposer()
@@ -124,38 +78,6 @@ final class AppController: NSObject, NSApplicationDelegate {
             .applicationName: "桌面贴纸 DeskStickers",
             .applicationVersion: "1.0.0",
         ])
-    }
-
-    // MARK: - 状态项
-
-    private func setupStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let button = item.button {
-            if let image = NSImage(systemSymbolName: "note.text", accessibilityDescription: "桌面贴纸") {
-                button.image = image
-            } else {
-                button.title = "贴"
-            }
-        }
-        let menu = NSMenu()
-        menu.addItem(withTitle: "新建贴纸", action: #selector(newStickerAction), keyEquivalent: "n")
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(withTitle: "显示/隐藏全部贴纸", action: #selector(toggleStickersVisibility), keyEquivalent: "")
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(withTitle: "关于桌面贴纸", action: #selector(showAboutAction), keyEquivalent: "")
-        menu.addItem(withTitle: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        item.menu = menu
-        statusItem = item
-    }
-
-    private func updateHideToggleTitle() {
-        let title = store.allHidden ? "显示全部贴纸" : "隐藏全部贴纸"
-        hideToggleMenuItem?.title = title
-        if let menu = statusItem?.menu {
-            menu.items
-                .first { $0.action == #selector(toggleStickersVisibility) }?
-                .title = title
-        }
     }
 
     // MARK: - 创建器
@@ -280,43 +202,6 @@ final class AppController: NSObject, NSApplicationDelegate {
         mount(copy)
     }
 
-    func setStyle(id: UUID, styleID: String, colorIndex: Int) {
-        guard let controller = controllers[id] else { return }
-        controller.viewController.applyStyle(styleID: styleID, colorIndex: colorIndex, animated: false)
-        store.persistNow()
-    }
-
-    func setScale(id: UUID, scale: Double) {
-        guard let controller = controllers[id] else { return }
-        controller.viewController.applyPaperScale(scale)
-        store.persistNow()
-    }
-
-    func setFont(id: UUID, fontName: String?, fontSize: Double?) {
-        guard let controller = controllers[id] else { return }
-        if let fontName { controller.viewController.applyFontName(fontName) }
-        if let fontSize { controller.viewController.applyFontSize(fontSize) }
-        store.persistNow()
-    }
-
-    func setText(id: UUID, text: String) {
-        guard let controller = controllers[id] else { return }
-        controller.viewController.applyText(text)
-        store.persistNow()
-    }
-
-    func moveSticker(id: UUID, toCGTopLeft point: CGPoint) {
-        guard let controller = controllers[id] else { return }
-        controller.viewController.movePaperToCGTopLeft(point)
-        store.persistNow()
-    }
-
-    func resizeSticker(id: UUID, paperWidth: CGFloat) {
-        guard let controller = controllers[id] else { return }
-        controller.viewController.setPaperWidthExternal(paperWidth)
-        store.persistNow()
-    }
-
     func endEditingOthers(except id: UUID?) {
         for (key, controller) in controllers where key != id {
             controller.viewController.endEditing()
@@ -325,7 +210,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func setStickersHidden(_ hidden: Bool) {
         store.setAllHidden(hidden)
-        updateHideToggleTitle()
+        statusItem.updateToggleTitle(allHidden: hidden)
         for controller in controllers.values {
             let panel = controller.panel
             if hidden {
@@ -342,6 +227,43 @@ final class AppController: NSObject, NSApplicationDelegate {
                 })
             }
         }
+    }
+
+    // MARK: - 单贴纸变更（菜单 / 自动化共用）
+
+    /// 对某张贴纸执行变更并立即持久化。
+    /// setStyle / setText / setScale / setFont / move / resize 共用的透传骨架。
+    private func mutate(_ id: UUID, _ body: (StickerViewController) -> Void) {
+        guard let controller = controllers[id] else { return }
+        body(controller.viewController)
+        store.persistNow()
+    }
+
+    func setStyle(id: UUID, styleID: String, colorIndex: Int) {
+        mutate(id) { $0.applyStyle(styleID: styleID, colorIndex: colorIndex, animated: false) }
+    }
+
+    func setScale(id: UUID, scale: Double) {
+        mutate(id) { $0.applyPaperScale(scale) }
+    }
+
+    func setFont(id: UUID, fontName: String?, fontSize: Double?) {
+        mutate(id) { vc in
+            if let fontName { vc.applyFontName(fontName) }
+            if let fontSize { vc.applyFontSize(fontSize) }
+        }
+    }
+
+    func setText(id: UUID, text: String) {
+        mutate(id) { $0.applyText(text) }
+    }
+
+    func moveSticker(id: UUID, toCGTopLeft point: CGPoint) {
+        mutate(id) { $0.movePaperToCGTopLeft(point) }
+    }
+
+    func resizeSticker(id: UUID, paperWidth: CGFloat) {
+        mutate(id) { $0.setPaperWidthExternal(paperWidth) }
     }
 
     // MARK: - 恢复
@@ -385,37 +307,12 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     func dumpRuntimeState(to url: URL) {
-        struct DumpSticker: Codable {
-            var id: String
-            var text: String
-            var style: String
-            var colorIndex: Int
-            var scale: Double
-            var fontName: String?
-            var fontSize: Double?
-            var paper: CGRect
-            var window: CGRect
-            /// 纸面在画布（快照）中的偏移，便于像素验证。
-            var canvasOffset: [CGFloat]
-            var level: Int
-            var visible: Bool
-        }
-        struct Dump: Codable {
-            var allHidden: Bool
-            var stickers: [DumpSticker]
-        }
-        var items: [DumpSticker] = []
+        var entries: [RuntimeStateDumper.Entry] = []
         for sticker in store.stickers {
             guard let controller = controllers[sticker.id] else { continue }
             let vc = controller.viewController
-            items.append(DumpSticker(
-                id: sticker.id.uuidString,
-                text: sticker.text,
-                style: sticker.styleID,
-                colorIndex: sticker.colorIndex,
-                scale: sticker.scale,
-                fontName: sticker.fontName,
-                fontSize: sticker.fontSize,
+            entries.append(RuntimeStateDumper.Entry(
+                sticker: sticker,
                 paper: vc.paperFrameCG,
                 window: vc.windowFrameCG,
                 canvasOffset: [vc.style.outerInsets.left,
@@ -424,10 +321,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                 visible: controller.panel.isVisible
             ))
         }
-        let dump = Dump(allHidden: store.allHidden, stickers: items)
-        if let data = try? JSONEncoder().encode(dump) {
-            try? data.write(to: url)
-        }
+        RuntimeStateDumper.write(allHidden: store.allHidden, entries: entries, to: url)
     }
 }
 
