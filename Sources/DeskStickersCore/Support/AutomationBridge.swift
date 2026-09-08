@@ -140,18 +140,39 @@ final class AutomationBridge: NSObject {
         appController.setStickersHidden(false)
     }
 
+    /// 自动化输出路径白名单：任何同会话进程都能发分布式通知，
+    /// 不校验的话 snapshot/dump 等于「以用户权限向任意路径写文件」。
+    private static let allowedOutputDirectories = [
+        NSTemporaryDirectory(),              // /var/folders/.../T/（e2e 工作区）
+        "/tmp/", "/private/tmp/",
+    ]
+
+    /// 校验自动化指定的输出路径落在安全目录内（防止任意路径写文件）。
+    private func sanitizedOutputURL(_ path: String) -> URL? {
+        let url = URL(fileURLWithPath: path)
+        let standardized = url.standardizedFileURL.path
+        for directory in Self.allowedOutputDirectories where standardized.hasPrefix(directory) {
+            return url
+        }
+        Log.warn("自动化输出路径被拒绝（仅允许临时目录）: \(path)")
+        return nil
+    }
+
     @objc private func handleSnapshot(_ note: Notification) {
-        guard let id = stickerID(note), let path = info(note)["path"] else { return }
+        guard let id = stickerID(note),
+              let path = info(note)["path"],
+              let url = sanitizedOutputURL(path) else { return }
         guard let data = appController.snapshotData(id: id) else {
             Log.warn("快照失败: \(id)")
             return
         }
-        try? data.write(to: URL(fileURLWithPath: path))
+        try? data.write(to: url)
     }
 
     @objc private func handleDump(_ note: Notification) {
-        guard let path = info(note)["path"] else { return }
-        appController.dumpRuntimeState(to: URL(fileURLWithPath: path))
+        guard let path = info(note)["path"],
+              let url = sanitizedOutputURL(path) else { return }
+        appController.dumpRuntimeState(to: url)
     }
 
     @objc private func handleFlush(_ note: Notification) {
