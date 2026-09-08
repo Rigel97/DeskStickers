@@ -96,6 +96,27 @@ test("存储-更新保持单一副本") {
     expectNear(reloaded.sticker(id: sticker.id)?.paperX ?? 0, 333)
 }
 
+test("存储-防抖合并高频写入") {
+    let dir = tempStoreDir(); defer { try? FileManager.default.removeItem(at: dir) }
+    let store = StickerStore(directory: dir)
+    // 模拟拖拽：同一防抖窗口内的连续变更不应逐次写盘
+    var sticker = makeSticker()
+    for x in stride(from: 100.0, through: 200.0, by: 10) {
+        sticker.paperX = x
+        store.upsert(sticker)
+    }
+    // 防抖窗口（0.4s）内文件尚未落盘或内容未含最新值
+    if let data = try? Data(contentsOf: store.fileURL),
+       let snapshot = try? JSONDecoder().decode(StickerStoreSnapshot.self, from: data) {
+        expect(snapshot.stickers.first?.paperX != 200, "防抖窗口内不应立即写入最新值")
+    }
+    // 防抖到期后（跑 run loop）应落盘且为最终值
+    RunLoop.main.run(until: Date().addingTimeInterval(0.7))
+    let reloaded = StickerStore(directory: dir)
+    expect(reloaded.stickers.count == 1)
+    expectNear(reloaded.sticker(id: sticker.id)?.paperX ?? 0, 200, 0.01, "防抖后落盘的是最终值")
+}
+
 test("存储-删除") {
     let dir = tempStoreDir(); defer { try? FileManager.default.removeItem(at: dir) }
     let store = StickerStore(directory: dir)
