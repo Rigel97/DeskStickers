@@ -1,0 +1,3 @@
+import DeskStickersCore
+
+DeskStickersCore.main()
