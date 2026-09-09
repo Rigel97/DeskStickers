@@ -1,107 +1,91 @@
-# DeskStickers 桌面贴纸
+# DeskStickers
 
-一款 macOS 桌面便签应用：把彩色贴纸钉在桌面上，随时记录、随手缩放。
+A macOS desktop sticky-notes app: pin colorful stickers to your desktop, jot things down anytime, resize on a whim.
 
-纯 Swift + AppKit 实现，零第三方依赖，SwiftPM 构建。
+Pure Swift + AppKit, zero third-party dependencies, built with SwiftPM.
 
-## 功能
+## Features
 
-- **8 种手绘风格**：便利贴、笔记本、手写、极简、复古、黑板、可爱、等宽——每种自带纸张纹理、阴影与配色变体
-- **自由摆放**：拖动贴纸到任意位置，悬浮于普通窗口之上，跨 Space 常驻
-- **拖动吸附**：拖动时与其他贴纸边缘/中线、屏幕边缘自动对齐（蓝色参考线，按住 ⌘ 拖动临时禁用）
-- **单贴纸隐藏**：右键「隐藏贴纸」暂时收起，状态栏贴纸列表可单独召回；「显示全部」一键找回所有
-- **全局快捷键**（任何应用下可用）：⌥⌘N 新建 · ⌥⌘V 剪贴板秒建 · ⌥⌘Z 撤销 · ⌥⌘\\ 显示/隐藏全部 · ⌥⌘P 鼠标穿透
-- **钉在桌面**：一键切换层级模式——贴纸沉到桌面层，不再遮挡正在使用的窗口
-- **鼠标穿透**：贴纸保持可见，点击穿到下层窗口（⌥⌘P）
-- **自由调整长宽**：
-  - 右下角手柄 = 整体缩放，字号随纸面按对角线比例同步变化（0.4×–2.5×）
-  - 按住 ⌥ 拖动右下角手柄 = 仅调整纸面宽高，字号不变（换个更大的纸重新排版）
-  - 左右边缘 = 仅调整宽度，文字自动重排
-  - 底部边缘 = 仅调整高度（进入固定高度模式，文字超出自动出现滚动条；右键菜单可恢复自动高度）
-- **字体调整**：右键菜单可切换字体族（苹方/宋体/楷体/圆体/黑体/等宽）与字号
-- **就地编辑**：双击或点工具栏进入编辑，Esc / ⌘↩ 结束；高度随内容自适应；新建空贴纸后直接进入输入
-- **撤销支持**：删除 / 新建 / 复制均可撤销（⌥⌘Z 任何应用下可用；编辑文字时 ⌘Z 仍是文本撤销；状态栏菜单也有撤销项）
-- **贴纸管理**：状态栏「贴纸列表」总览全部贴纸（隐藏的带标记），点击定位——屏幕外自动拉回并闪烁提示；空列表直接引导新建
-- **悬停工具栏**：编辑 / 风格 / 复制 / 删除四个高频操作，悬停即现；按钮 hover 高亮，删除悬停变红提示危险
-- **细节反馈**：新建淡入、拖动时贴纸轻微「抬起」、首次创建后工具栏与缩放手柄短暂提示（可发现性）
-- **创建器记忆**：记住上次选择的风格/颜色与窗口位置（外接屏拔掉后自动回居中）
-- **菜单栏常驻**：不占 Dock 位（LSUIElement），生命周期由状态栏图标接管
+- **8 hand-drawn styles** — memo pad, notebook, handwriting, minimalist, retro, chalkboard, kawaii, and monospace — each with its own paper texture, shadow, and color variants
+- **Free placement** — drag stickers anywhere; they float above normal windows and stay put across Spaces
+- **Drag snapping** — stickers auto-align to the edges/centerlines of other stickers and to screen edges while dragging (blue guides; hold ⌘ while dragging to temporarily disable)
+- **Per-sticker hide** — right-click → Hide Sticker to tuck one away temporarily; recall it individually from the status-bar sticker list, or use Show All to bring everything back
+- **Global shortcuts** (usable from any app): ⌥⌘N new sticker · ⌥⌘V instant sticker from clipboard · ⌥⌘Z undo · ⌥⌘\ show/hide all · ⌥⌘P click-through
+- **Pin to desktop** — a one-click layer switch that sinks stickers to the desktop layer so they stop covering the windows you're working in
+- **Click-through** — stickers stay visible while clicks pass through to the windows underneath (⌥⌘P)
+- **Flexible resizing**:
+  - Bottom-right handle = uniform scaling; the font size follows the paper along the diagonal ratio (0.4×–2.5×)
+  - Hold ⌥ and drag the bottom-right handle = change only the paper's width/height, keeping the font size (like moving to a bigger sheet and re-flowing)
+  - Left/right edges = width only; text re-wraps automatically
+  - Bottom edge = height only (fixed-height mode; a scrollbar appears once text overflows; the right-click menu restores auto height)
+- **Font options** — switch font family (PingFang / Songti / Kaiti / Yuanti / Heiti / monospace) and size from the right-click menu
+- **Inline editing** — double-click or use the toolbar to start editing, Esc / ⌘↩ to finish; height adapts to the content; a newly created empty sticker goes straight into input mode
+- **Undo support** — delete / create / duplicate are all undoable (⌥⌘Z works from any app; while editing text, ⌘Z stays as text undo; the status-bar menu has an undo item too)
+- **Sticker management** — the status-bar sticker list gives an overview of every sticker (hidden ones marked); click one to jump to it — off-screen stickers are pulled back on screen and flash; an empty list guides you straight to creating one
+- **Hover toolbar** — Edit / Style / Duplicate / Delete, the four most frequent actions, appear on hover; buttons highlight on hover, and Delete turns red to signal danger
+- **Micro-feedback** — new stickers fade in, stickers lift slightly while being dragged, and a brief hint appears over the toolbar and resize handle right after first creation (for discoverability)
+- **Creator memory** — remembers your last style/color choice and the window position (auto-recenters when the external display is unplugged)
+- **Menu-bar resident** — takes no Dock slot (LSUIElement); the lifecycle is owned by the status-bar icon
 
-## 构建
+## Build
 
-要求 macOS 13+ 与 Swift 6 工具链。
+Requires macOS 13+ and the Swift 6 toolchain.
 
 ```bash
-swift build            # 调试构建
-bash Scripts/make-app.sh   # 打包 build/DeskStickers.app（含图标 + ad-hoc 签名）
+swift build            # debug build
+bash Scripts/make-app.sh   # package build/DeskStickers.app (icon + ad-hoc signing)
 ```
 
-安装到 /Applications：
+Install to /Applications:
 
 ```bash
 cp -R build/DeskStickers.app /Applications/
 ```
 
-## 测试
+## Testing
 
-本机 CLT 环境缺少 XCTest，因此采用自建测试执行器：
+The local CLT environment lacks XCTest, so a custom test runner is used instead:
 
 ```bash
-bash Scripts/run-tests.sh    # 单元/模型自测（Swift）
-bash Scripts/verify-e2e.sh   # 端到端回归（Python + 分布式通知自动化）
+bash Scripts/run-tests.sh    # unit/model self-tests (Swift)
+bash Scripts/verify-e2e.sh   # end-to-end regression (Python + distributed-notification automation)
 ```
 
-e2e 通过 `DistributedNotificationCenter` 驱动真实 App 实例完成创建、拖动、缩放、
-换风格、像素级颜色断言等验证，不依赖 XCUITest 与辅助功能权限。
+The e2e suite drives a real app instance via `DistributedNotificationCenter` to verify creation, dragging, resizing, style switching, pixel-level color assertions, and more — no XCUITest or Accessibility permissions involved.
 
-## 项目结构
+## Project structure
 
 ```
 Sources/
   DeskStickersCore/
-    Model/          Sticker / StickerStyle / StickerStore（持久化）
-    UI/             贴纸窗口、画布、交互层、缩放手柄、工具栏、风格选择器、创建器
-    Rendering/      风格绘制、文字引擎、离屏预览渲染
-    Support/        自动化桥、屏幕几何、全局热键（Carbon）、拖动吸附引擎、日志
+    Model/          Sticker / StickerStyle / StickerStore (persistence)
+    UI/             sticker windows, canvas, interaction layer, resize handles, toolbar, style picker, creator
+    Rendering/      style drawing, text engine, offscreen preview rendering
+    Support/        automation bridge, screen geometry, global hotkeys (Carbon), drag-snap engine, logging
     AppController.swift
-  DeskStickers/     可执行入口
-  DeskStickersSelfTest/  自建测试运行器（248 项断言）
+  DeskStickers/     executable entry point
+  DeskStickersSelfTest/  custom test runner (248 assertions)
 Scripts/
-  make-app.sh       打包 .app（含图标 + ad-hoc 签名 + LSUIElement）
-  run-tests.sh      自测
-  verify-e2e.sh     e2e 回归（61 项断言）
-  verification/     e2e 脚本与验证工具源码
+  make-app.sh       package the .app (icon + ad-hoc signing + LSUIElement)
+  run-tests.sh      self-tests
+  verify-e2e.sh     e2e regression (61 assertions)
+  verification/     e2e scripts and verification tool sources
 ```
 
-### 设计要点
+### Design notes
 
-- **一贴纸一窗口**：每个贴纸是一个无边框 `NSPanel`（默认 floating 层，可切换到
-  桌面层"钉在桌面"），可以独立压在任意应用窗口之上；拖动与命中测试逻辑因此保持极简
-- **应用级撤销走显式分组**：`NSUndoManager` 的事件循环自动分组在通知驱动场景下
-  不可靠（多个操作会落进同一个未关闭的分组），因此每个操作显式开组，
-  保证一次 ⌘Z 恰好撤销一步
-- **全局热键 = Carbon + 菜单展示同源**：`GlobalHotkeyCenter` 封装 `RegisterEventHotKey`
-  （无需辅助功能权限，应用不激活也可触发），快捷键定义集中在 `AppHotkeys`，
-  菜单等效键展示与热键注册共用同一份定义，不会漂移
-- **吸附 = 纯函数引擎 + 实时参考线**：`SnapEngine` 只做几何计算（可单测），
-  `applyDragSnap` 负责坐标系统一（窗口 frame ↔ 纸面 frame）与拖动基准 rebase，
-  参考线是独立透明窗口，不参与事件
-- **风格 = 值类型 + 绘制闭包**：`StickerStyle` 描述全部排版度量与绘制方式，
-  等比缩放（`scaled(by:)`）只做一次乘法，装饰按纸面相对坐标自然跟随
-- **effectiveStyle 派生链**：贴纸的 `scale` / 字体覆盖与基础风格合成出实际生效
-  风格，渲染、排版、窗口尺寸全部走同一条链，不会出现"文字变了纸没变"
-- **状态文件向后兼容**：JSON 解码用 `decodeIfPresent`，新增字段（scale / hidden /
-  clickThrough 等）对旧状态文件透明
+- **One window per sticker** — every sticker is a borderless `NSPanel` (on the floating layer by default, switchable to the desktop layer via "pin to desktop") that can independently sit above any app window; this keeps the dragging and hit-testing logic minimal
+- **App-level undo uses explicit grouping** — `NSUndoManager`'s runloop auto-grouping is unreliable in notification-driven scenarios (multiple operations end up in one unclosed group), so each operation opens its own group explicitly, guaranteeing that one ⌘Z undoes exactly one step
+- **Global hotkeys = Carbon + one source of truth for menus** — `GlobalHotkeyCenter` wraps `RegisterEventHotKey` (no Accessibility permission needed; triggers even when the app is inactive); shortcut definitions are centralized in `AppHotkeys`, and menu key-equivalent display and hotkey registration share the same definitions, so they can never drift apart
+- **Snapping = pure-function engine + live guides** — `SnapEngine` does nothing but geometry (unit-testable); `applyDragSnap` unifies the coordinate systems (window frame ↔ paper frame) and rebases the drag anchor; guides are separate transparent windows that never take part in events
+- **Styles = value types + draw closures** — `StickerStyle` describes all typographic metrics and how to draw them; uniform scaling (`scaled(by:)`) is a single multiplication, and decorations follow along naturally via paper-relative coordinates
+- **effectiveStyle derivation chain** — a sticker's `scale` / font overrides compose with the base style into the actually-effective style; rendering, layout, and window sizing all flow through the same chain, so "the text changed but the paper didn't" can never happen
+- **Backward-compatible state files** — JSON decoding uses `decodeIfPresent`, so new fields (scale / hidden / clickThrough, …) are transparent to old state files
 
-## 自动化接口
+## Automation interface
 
-以 `--automation` 启动后监听 `com.deskstickers.automation.<action>` 分布式通知，
-支持 create / move / resize / setHeight / setStyle / setText / setScale / setFont /
-delete / undo / setPinned / setClickThrough / setHidden / reveal / snapshot / dump /
-gripDrag（含 target=catcher 移动拖动路径）等动作，供 e2e 与调试工具
-（`Scripts/verification/dnctl.swift`）使用。全局热键在自动化模式下不注册，
-避免干扰测试会话。
+When launched with `--automation`, the app listens for `com.deskstickers.automation.<action>` distributed notifications. Supported actions include create / move / resize / setHeight / setStyle / setText / setScale / setFont / delete / undo / setPinned / setClickThrough / setHidden / reveal / snapshot / dump / gripDrag (including target=catcher move-drag paths) — used by the e2e suite and the debug tool (`Scripts/verification/dnctl.swift`). Global hotkeys are not registered in automation mode so test sessions stay undisturbed.
 
-## 许可
+## License
 
-个人项目，仅供学习交流。
+Personal project, for learning and exchange purposes only.
