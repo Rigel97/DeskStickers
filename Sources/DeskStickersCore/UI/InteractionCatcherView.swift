@@ -10,6 +10,18 @@ final class InteractionCatcherView: NSView {
     var onDrag: ((NSPoint) -> Void)?
     var onDragEnded: (() -> Void)?
     var onClick: (() -> Void)?
+    /// 按下/松开反馈（true = 抬起贴纸）。
+    var onLift: ((Bool) -> Void)?
+
+    /// 吸附修正后的基准重置：后续 delta 从新 origin 起算，
+    /// 否则下一帧会用旧基准覆盖吸附修正。
+    func rebaseDragOrigin(to origin: CGPoint) {
+        dragWindowOrigin = origin
+        // 同步按下时的鼠标基准，保证后续帧的 delta 连续。
+        if dragStart != nil {
+            dragStart = NSEvent.mouseLocation
+        }
+    }
 
     private var dragStart: CGPoint?
     private var dragWindowOrigin: CGPoint?
@@ -31,6 +43,7 @@ final class InteractionCatcherView: NSView {
         didMove = false
         dragStart = NSEvent.mouseLocation
         dragWindowOrigin = window.frame.origin
+        onLift?(true)
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -50,6 +63,7 @@ final class InteractionCatcherView: NSView {
         dragStart = nil
         dragWindowOrigin = nil
         NSCursor.openHand.set()
+        onLift?(false)
         if wasDragging {
             if didMove {
                 onDragEnded?()

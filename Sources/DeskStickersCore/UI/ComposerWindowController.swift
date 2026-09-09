@@ -2,10 +2,17 @@ import AppKit
 
 /// 创建器：输入文字 → 选择风格 → 创建贴纸。
 /// 单实例，⌘↩ 创建、Esc 关闭，风格卡片实时预览（真实渲染缩放）。
+/// 记忆上次选择的风格/颜色与窗口位置（NSUserDefaults，随用户习惯走）。
 final class ComposerWindowController: NSObject, NSWindowDelegate {
 
     var onCreate: ((String, String, Int) -> Void)?
     var onClose: (() -> Void)?
+
+    private enum Keys {
+        static let styleIndex = "composer.styleIndex"
+        static let colorIndex = "composer.colorIndex"
+        static let windowOrigin = "composer.windowOrigin"
+    }
 
     private let panel: NSPanel
     private let textView = NSTextView(frame: .zero)
@@ -14,6 +21,7 @@ final class ComposerWindowController: NSObject, NSWindowDelegate {
     private let createButton = NSButton(title: "创建贴纸", target: nil, action: nil)
     private var selectedStyleIndex = StickerStyles.index(of: "sticky")
     private var selectedColorIndex = 0
+    private var hasRestoredSelection = false
 
     override init() {
         let contentRect = NSRect(x: 0, y: 0, width: 480, height: 468)
@@ -33,6 +41,7 @@ final class ComposerWindowController: NSObject, NSWindowDelegate {
         panel.minSize = contentRect.size
         panel.maxSize = contentRect.size
         buildUI()
+        restoreSelection()
         refreshCells()
     }
 
@@ -180,6 +189,45 @@ final class ComposerWindowController: NSObject, NSWindowDelegate {
         return text.isEmpty ? "今天也要加油" : String(text.prefix(10))
     }
 
+    // MARK: - 记忆
+
+    /// 恢复上次选择的风格/颜色（验证合法范围，越界回退默认）。
+    private func restoreSelection() {
+        let defaults = UserDefaults.standard
+        let styleIndex = defaults.integer(forKey: Keys.styleIndex)
+        if styleIndex >= 0, styleIndex < StickerStyles.all.count {
+            selectedStyleIndex = styleIndex
+        }
+        let maxColors = StickerStyles.all[selectedStyleIndex].variants.count
+        let colorIndex = defaults.integer(forKey: Keys.colorIndex)
+        if colorIndex >= 0, colorIndex < maxColors {
+            selectedColorIndex = colorIndex
+        }
+        hasRestoredSelection = true
+    }
+
+    private func persistSelection() {
+        let defaults = UserDefaults.standard
+        defaults.set(selectedStyleIndex, forKey: Keys.styleIndex)
+        defaults.set(selectedColorIndex, forKey: Keys.colorIndex)
+        let origin = panel.frame.origin
+        defaults.set([Double(origin.x), Double(origin.y)], forKey: Keys.windowOrigin)
+    }
+
+    private func restoreWindowFrame() {
+        if let stored = UserDefaults.standard.array(forKey: Keys.windowOrigin) as? [Double],
+           stored.count == 2 {
+            let origin = CGPoint(x: stored[0], y: stored[1])
+            let frame = NSRect(origin: origin, size: panel.frame.size)
+            // 位置需落在某块屏幕内，避免拔掉外接屏后窗口丢失
+            if NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) {
+                panel.setFrameOrigin(origin)
+                return
+            }
+        }
+        panel.center()
+    }
+
     // MARK: - 行为
 
     func show() {
@@ -188,12 +236,14 @@ final class ComposerWindowController: NSObject, NSWindowDelegate {
         } else {
             NSApp.activate(ignoringOtherApps: true)
         }
-        panel.center()
+        restoreWindowFrame()
+        refreshDots()
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(textView)
     }
 
     func close() {
+        persistSelection()
         panel.orderOut(nil)
         onClose?()
     }

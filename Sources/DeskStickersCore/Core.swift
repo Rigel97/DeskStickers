@@ -24,11 +24,14 @@ final class StickerApplication: NSApplication {
 /// 应用入口：组装 NSApplication、主菜单与 AppController，然后进入事件循环。
 public func main() {
     let app = StickerApplication.shared
+    // 桌面常驻工具：不占 Dock 位，也不抢菜单栏焦点（生命周期由状态栏托替）。
+    app.setActivationPolicy(.accessory)
     let controller = AppController.shared
     app.delegate = controller
     let handles = AppMenuFactory.makeMainMenu(target: controller)
     app.mainMenu = handles.menu
     controller.statusItem.bindMainMenuToggle(handles.visibilityToggle)
     controller.statusItem.bindPinnedToggle(handles.pinnedToggle)
+    controller.statusItem.bindClickThroughToggle(handles.clickThroughToggle)
     app.run()
 }

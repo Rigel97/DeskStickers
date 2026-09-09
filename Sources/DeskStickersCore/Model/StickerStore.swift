@@ -6,25 +6,30 @@ public struct StickerStoreSnapshot: Codable, Equatable {
     public var allHidden: Bool
     /// 钉在桌面模式：贴纸置于桌面层（普通窗口之下），不再悬浮遮挡内容。
     public var pinnedToDesktop: Bool
+    /// 鼠标穿透模式：贴纸保持可见，但鼠标事件穿到下层窗口。
+    public var clickThrough: Bool
     public var stickers: [Sticker]
 
-    public init(version: Int = 1, allHidden: Bool = false, pinnedToDesktop: Bool = false, stickers: [Sticker] = []) {
+    public init(version: Int = 1, allHidden: Bool = false, pinnedToDesktop: Bool = false,
+                clickThrough: Bool = false, stickers: [Sticker] = []) {
         self.version = version
         self.allHidden = allHidden
         self.pinnedToDesktop = pinnedToDesktop
+        self.clickThrough = clickThrough
         self.stickers = stickers
     }
 
     private enum CodingKeys: String, CodingKey {
-        case version, allHidden, pinnedToDesktop, stickers
+        case version, allHidden, pinnedToDesktop, clickThrough, stickers
     }
 
-    /// 旧版本状态文件没有 pinnedToDesktop 字段，解码时取默认值。
+    /// 旧版本状态文件没有 pinnedToDesktop / clickThrough 字段，解码时取默认值。
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = try c.decode(Int.self, forKey: .version)
         allHidden = try c.decode(Bool.self, forKey: .allHidden)
         pinnedToDesktop = try c.decodeIfPresent(Bool.self, forKey: .pinnedToDesktop) ?? false
+        clickThrough = try c.decodeIfPresent(Bool.self, forKey: .clickThrough) ?? false
         stickers = try c.decode([Sticker].self, forKey: .stickers)
     }
 }
@@ -127,6 +132,10 @@ public final class StickerStore {
         snapshot.pinnedToDesktop
     }
 
+    public var clickThrough: Bool {
+        snapshot.clickThrough
+    }
+
     public func upsert(_ sticker: Sticker) {
         var updated = sticker
         updated.updatedAt = Date()
@@ -159,6 +168,11 @@ public final class StickerStore {
 
     public func setPinnedToDesktop(_ pinned: Bool) {
         snapshot.pinnedToDesktop = pinned
+        persistSoon()
+    }
+
+    public func setClickThrough(_ enabled: Bool) {
+        snapshot.clickThrough = enabled
         persistSoon()
     }
 

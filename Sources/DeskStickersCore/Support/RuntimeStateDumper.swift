@@ -30,6 +30,7 @@ enum RuntimeStateDumper {
         var heightOverride: Double?
         var fontName: String?
         var fontSize: Double?
+        var hidden: Bool
         var paper: CGRect
         var window: CGRect
         /// 纸面在画布（快照）中的偏移，便于像素验证。
@@ -41,11 +42,13 @@ enum RuntimeStateDumper {
     struct Dump: Codable {
         var allHidden: Bool
         var pinnedToDesktop: Bool
+        var clickThrough: Bool
         var stickers: [DumpSticker]
     }
 
     /// 把全部贴纸的运行时状态编码写入 url。
-    static func write(allHidden: Bool, pinnedToDesktop: Bool, entries: [Entry], to url: URL) {
+    static func write(allHidden: Bool, pinnedToDesktop: Bool, clickThrough: Bool,
+                      entries: [Entry], to url: URL) {
         let items = entries.map { entry in
             DumpSticker(
                 id: entry.sticker.id.uuidString,
@@ -56,6 +59,7 @@ enum RuntimeStateDumper {
                 heightOverride: entry.sticker.heightOverride,
                 fontName: entry.sticker.fontName,
                 fontSize: entry.sticker.fontSize,
+                hidden: entry.sticker.hidden,
                 paper: entry.paper,
                 window: entry.window,
                 canvasOffset: entry.canvasOffset,
@@ -63,7 +67,8 @@ enum RuntimeStateDumper {
                 visible: entry.visible
             )
         }
-        let dump = Dump(allHidden: allHidden, pinnedToDesktop: pinnedToDesktop, stickers: items)
+        let dump = Dump(allHidden: allHidden, pinnedToDesktop: pinnedToDesktop,
+                        clickThrough: clickThrough, stickers: items)
         if let data = try? JSONEncoder().encode(dump) {
             try? data.write(to: url)
         }

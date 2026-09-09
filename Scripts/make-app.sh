@@ -65,12 +65,15 @@ cat > "$APP_PATH/Contents/Info.plist" <<PLIST
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>LSUIElement</key>
+    <true/>
     <key>NSSupportsAutomaticTermination</key>
     <false/>
     <key>NSSupportsSuddenTermination</key>
     <false/>
 </dict>
 </plist>
+
 PLIST
 
 echo "==> ad-hoc 签名"

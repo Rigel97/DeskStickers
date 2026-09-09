@@ -10,6 +10,12 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
         var onDuplicate: (Sticker) -> Void = { _ in }
         var onInteracted: (Sticker) -> Void = { _ in }
         var onEditStateChange: (Sticker, Bool) -> Void = { _, _ in }
+        /// 拖动过程中每帧回调（窗口当前 frame，AppKit 全局坐标），用于吸附协调。
+        var onDragLive: (Sticker, CGRect) -> Void = { _, _ in }
+        /// 拖动结束（无论是否吸附过），用于隐藏参考线。
+        var onDragEnded: (Sticker) -> Void = { _ in }
+        /// 单贴纸隐藏/显示（右键菜单）。
+        var onToggleHidden: ((Sticker) -> Void)?
     }
 
     private(set) var sticker: Sticker
@@ -95,6 +101,7 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
         StickerTextEngine.configure(textView, style: style, colorIndex: sticker.colorIndex)
         textView.delegate = self
         textView.onEscape = { [weak self] in self?.endEditing() }
+        textView.onSubmit = { [weak self] in self?.endEditing() }
         scrollView.documentView = textView
 
         // 交互层
@@ -103,8 +110,18 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
             guard let self else { return }
             self.callbacks.onInteracted(self.sticker)
         }
-        catcher.onDrag = { [weak self] origin in self?.panel?.setFrameOrigin(origin) }
-        catcher.onDragEnded = { [weak self] in self?.commitWindowFrame(interacted: true) }
+        catcher.onDrag = { [weak self] origin in
+            guard let self, let panel = self.panel else { return }
+            panel.setFrameOrigin(origin)
+            self.callbacks.onDragLive(self.sticker, panel.frame)
+        }
+        catcher.onDragEnded = { [weak self] in
+            self?.commitWindowFrame(interacted: true)
+            if let self { self.callbacks.onDragEnded(self.sticker) }
+        }
+        catcher.onLift = { [weak self] lifted in
+            self?.canvas.isLifted = lifted
+        }
         catcher.onContextMenu = { [weak self] _ in self?.presentContextMenu() }
 
         // 缩放手柄（右下角）：默认字号跟随纸面大小（对角线等比），
@@ -159,8 +176,15 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
             self.isMouseInside = inside
             self.updateChrome()
         }
-        canvas.onPaddingDrag = { [weak self] origin in self?.panel?.setFrameOrigin(origin) }
-        canvas.onPaddingDragEnded = { [weak self] in self?.commitWindowFrame(interacted: false) }
+        canvas.onPaddingDrag = { [weak self] origin in
+            guard let self, let panel = self.panel else { return }
+            panel.setFrameOrigin(origin)
+            self.callbacks.onDragLive(self.sticker, panel.frame)
+        }
+        canvas.onPaddingDragEnded = { [weak self] in
+            self?.commitWindowFrame(interacted: false)
+            if let self { self.callbacks.onDragEnded(self.sticker) }
+        }
 
         updatePlaceholder()
         updateChrome(initial: true)
@@ -320,6 +344,7 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
     func endEditing() {
         guard isEditing else { return }
         isEditing = false
+        canvas.isLifted = false
         let newText = textView.string
         if newText != sticker.text {
             sticker.text = newText
@@ -342,6 +367,16 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
         if isEditing, !isPopoverVisible {
             endEditing()
         }
+    }
+
+    /// 全局「鼠标穿透」模式切换的视图侧收尾：关掉风格弹窗、结束编辑，
+    /// 并复位悬停态——ignoresMouseEvents 后 hover 事件不再到达，
+    /// isMouseInside 若为 true 会卡住，工具栏/手柄永远显示不出来。
+    func handleClickThroughChanged(enabled: Bool) {
+        if isPopoverVisible { stylePopover.performClose(nil) }
+        if isEditing { endEditing() }
+        if enabled { isMouseInside = false }
+        updateChrome()
     }
 
     // MARK: - 文字编辑回调
@@ -563,7 +598,8 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
     // MARK: - 悬停工具栏
 
     /// 定位反馈：短暂降低再恢复不透明度，让用户一眼找到这张贴纸。
-    func flashPanel() {
+    /// resumeAlpha：闪烁结束后的基准不透明度（鼠标穿透模式下非 1）。
+    func flashPanel(resumeAlpha: CGFloat = 1) {
         guard let panel = panel else { return }
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.16
@@ -571,7 +607,7 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
         }, completionHandler: {
             NSAnimationContext.runAnimationGroup({ context in
                 context.duration = 0.16
-                panel.animator().alphaValue = 1
+                panel.animator().alphaValue = resumeAlpha
             }, completionHandler: nil)
         })
     }
@@ -592,6 +628,31 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
                 self.toolbar.isHidden = !self.isEditing && !self.isMouseInside && !self.isPopoverVisible
                 self.grip.isHidden = self.toolbar.isHidden
             }
+        })
+    }
+
+    /// 可发现性提示：让工具栏与缩放手柄短暂显现后淡出，
+    /// 告诉新用户「贴纸可以编辑/缩放」。只在每个应用生命周期内首次创建时调用。
+    func flashChromeHint() {
+        toolbar.isHidden = false
+        grip.isHidden = false
+        toolbar.alphaValue = 0
+        grip.alphaValue = 0
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.3
+            toolbar.animator().alphaValue = 1
+            grip.animator().alphaValue = 1
+        }, completionHandler: { [weak self] in
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.5
+                context.completionHandler = nil
+                self?.toolbar.animator().alphaValue = 0
+                self?.grip.animator().alphaValue = 0
+            }, completionHandler: { [weak self] in
+                guard let self, !self.isEditing, !self.isMouseInside, !self.isPopoverVisible else { return }
+                self.toolbar.isHidden = true
+                self.grip.isHidden = true
+            })
         })
     }
 
@@ -701,6 +762,15 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
         duplicateItem.target = self
         menu.addItem(duplicateItem)
 
+        let hideItem = NSMenuItem(title: sticker.hidden ? "显示贴纸" : "隐藏贴纸",
+                                  action: #selector(toggleHiddenMenuAction), keyEquivalent: "")
+        hideItem.target = self
+        menu.addItem(hideItem)
+
+        let bringToFrontItem = NSMenuItem(title: "置前", action: #selector(bringToFrontMenuAction), keyEquivalent: "")
+        bringToFrontItem.target = self
+        menu.addItem(bringToFrontItem)
+
         let resetHeight = NSMenuItem(title: "恢复自动高度", action: #selector(resetHeightMenuAction), keyEquivalent: "")
         resetHeight.target = self
         resetHeight.isEnabled = sticker.heightOverride != nil
@@ -730,6 +800,13 @@ final class StickerViewController: NSViewController, NSTextViewDelegate, NSPopov
     @objc private func fontSizeDecreaseAction() { adjustFontSize(by: -2) }
     @objc private func fontSizeResetAction() { applyFontSize(nil) }
     @objc private func duplicateMenuAction() { callbacks.onDuplicate(sticker) }
+    @objc private func toggleHiddenMenuAction() {
+        callbacks.onToggleHidden?(sticker)
+    }
+    @objc private func bringToFrontMenuAction() {
+        callbacks.onInteracted(sticker)
+        panel?.orderFrontRegardless()
+    }
     @objc private func resetHeightMenuAction() { resetPaperHeightAuto() }
     @objc private func deleteMenuAction() { callbacks.onDelete(sticker) }
 

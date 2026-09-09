@@ -12,6 +12,9 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
     let statusItem = StatusItemController()
     private var controllers: [UUID: StickerWindowController] = [:]
     private var composer: ComposerWindowController?
+    private var globalHotkeys: [GlobalHotkeyCenter] = []
+    /// 拖动吸附的对齐参考线覆盖窗口（懒创建，全局唯一）。
+    private lazy var alignmentGuideWindow = AlignmentGuideWindow()
 
     override private init() {
         // --state-dir <path>：覆盖状态目录（自动化/e2e 用真实隔离目录——
@@ -36,16 +39,23 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
         statusItem.install(target: self)
         statusItem.updateToggleTitle(allHidden: store.allHidden)
         statusItem.updatePinnedState(pinned: store.pinnedToDesktop)
+        statusItem.updateClickThroughState(clickThrough: store.clickThrough)
         statusItem.stickerListProvider = { [weak self] in
             guard let self else { return [] }
             return self.store.stickers.map { sticker in
                 let trimmed = sticker.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 let body = trimmed.isEmpty ? "（空贴纸）" : String(trimmed.prefix(18))
+                let hiddenMark = (sticker.hidden && !self.store.allHidden) ? " [已隐藏]" : ""
                 return StatusItemController.StickerListEntry(
                     id: sticker.id,
-                    title: "\(StickerStyles.style(id: sticker.styleID).name) · \(body)"
+                    title: "\(StickerStyles.style(id: sticker.styleID).name) · \(body)\(hiddenMark)"
                 )
             }
+        }
+
+        // 全局热键在自动化模式下跳过：避免占用系统级组合键干扰 e2e 会话。
+        if !CommandLine.arguments.contains("--automation") {
+            installGlobalHotkeys()
         }
 
         if CommandLine.arguments.contains("--automation") {
@@ -103,6 +113,14 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
         applyPinnedToDesktop(!store.pinnedToDesktop)
     }
 
+    @objc func toggleClickThrough() {
+        applyClickThrough(!store.clickThrough)
+    }
+
+    @objc func undoAction() {
+        performUndo()
+    }
+
     @objc func revealStickerAction(_ sender: NSMenuItem) {
         guard let idString = sender.representedObject as? String,
               let id = UUID(uuidString: idString) else { return }
@@ -125,9 +143,10 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
                 guard let self else { return }
                 let sticker = self.createSticker(text: text, styleID: styleID, colorIndex: colorIndex,
                                                  paperTopLeftCG: nil, paperWidthOverride: nil)
-                // 空贴纸创建后直接进入编辑，省掉一次双击。
+                // 空贴纸创建后直接进入编辑，省掉一次双击（穿透模式下点不到贴纸，跳过）。
                 if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    !self.store.allHidden,
+                   !self.store.clickThrough,
                    let vc = self.controllers[sticker.id]?.viewController {
                     vc.beginEditing()
                 }
@@ -180,6 +199,16 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
         )
         store.upsert(sticker)
         mount(sticker)
+        // 创建淡入：贴纸优雅地出现，而不是「啪」地闪现在屏幕上。
+        if !store.allHidden, !store.clickThrough,
+           let panel = controllers[sticker.id]?.panel, !sticker.hidden {
+            panel.alphaValue = 0
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.22
+                panel.animator().alphaValue = 1
+            })
+        }
+        hintStickerChromeIfNeeded()
         if registersUndo {
             registerUndoDelete(sticker.id, actionName: "新建贴纸")
         }
@@ -206,10 +235,22 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
     private func mount(_ sticker: Sticker) {
         endEditingOthers(except: sticker.id)
         let controller = StickerWindowController(sticker: sticker, callbacks: makeCallbacks())
-        controller.panel.level = stickerLevel
         controllers[sticker.id] = controller
-        if !store.allHidden {
-            controller.panel.orderFrontRegardless()
+        presentPanel(of: controller)
+    }
+
+    /// 应用全局窗口模式（层级 + 鼠标穿透）并按需显示。
+    /// 新建 / 恢复 / 撤销恢复共用，保证穿透与层级状态一致。
+    private func presentPanel(of controller: StickerWindowController) {
+        let panel = controller.panel
+        panel.level = stickerLevel
+        panel.ignoresMouseEvents = store.clickThrough
+        let stickerHidden = controller.viewController.sticker.hidden
+        if !store.allHidden, !stickerHidden {
+            panel.alphaValue = store.clickThrough ? Self.clickThroughAlpha : 1
+            panel.orderFrontRegardless()
+        } else {
+            panel.orderOut(nil)
         }
     }
 
@@ -240,8 +281,64 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
                 if editing {
                     self?.endEditingOthers(except: sticker.id)
                 }
+            },
+            onDragLive: { [weak self] sticker, windowFrame in
+                self?.applyDragSnap(stickerID: sticker.id, windowFrame: windowFrame)
+            },
+            onDragEnded: { [weak self] sticker in
+                self?.alignmentGuideWindow.hide()
+            },
+            onToggleHidden: { [weak self] sticker in
+                self?.setStickerHidden(id: sticker.id, hidden: !sticker.hidden)
             }
         )
+    }
+
+    /// 临时验证开关：定位 e2e 时序问题用。
+    static var snapEnabled = true
+
+    /// 拖动过程中的实时吸附：调整窗口原点并展示对齐参考线。
+    /// 按住 ⌘ 拖动 = 临时禁用吸附（与其他专业工具的惯例一致）。
+    private func applyDragSnap(stickerID: UUID, windowFrame: CGRect) {
+        guard !store.clickThrough, Self.snapEnabled else { return }
+        // 按住 ⌘ 拖动 = 临时禁用吸附（与其他专业工具的惯例一致）。
+        if NSApp.currentEvent?.modifierFlags.contains(.command) == true {
+            alignmentGuideWindow.hide()
+            return
+        }
+        let others = store.stickers.compactMap { sticker -> (UUID, CGRect)? in
+            guard sticker.id != stickerID, !sticker.hidden else { return nil }
+            guard controllers[sticker.id] != nil else { return nil }
+            return (sticker.id, sticker.paperFrame)
+        }
+        let screens = NSScreen.screens.map { $0.visibleFrame }
+        // 统一到纸面坐标系：传入的是窗口 frame，比对目标是其他贴纸的纸面 frame，
+        // 不换算的话 insets 偏移（12pt+）会永远盖过吸附阈值。
+        guard let vc = controllers[stickerID]?.viewController else { return }
+        let insets = vc.style.outerInsets
+        let paperFrame = CGRect(
+            x: windowFrame.minX + insets.left,
+            y: windowFrame.minY + insets.bottom,
+            width: windowFrame.width - insets.left - insets.right,
+            height: windowFrame.height - insets.top - insets.bottom
+        )
+        let result = SnapEngine.snap(windowFrame: paperFrame, movingID: stickerID,
+                                     otherStickers: others, screens: screens)
+        let snappedOrigin = CGPoint(
+            x: result.origin.x - insets.left,
+            y: result.origin.y - insets.bottom
+        )
+        if snappedOrigin != windowFrame.origin {
+            controllers[stickerID]?.panel.setFrameOrigin(snappedOrigin)
+            // 重置拖动基准：后续帧从吸附后的位置起算，避免下一帧覆盖吸附修正。
+            controllers[stickerID]?.viewController.catcher.rebaseDragOrigin(to: snappedOrigin)
+            controllers[stickerID]?.viewController.canvas.rebaseDragOrigin(to: snappedOrigin)
+        }
+        if result.guides.isEmpty {
+            alignmentGuideWindow.hide()
+        } else {
+            alignmentGuideWindow.show(guides: result.guides)
+        }
     }
 
     func deleteSticker(_ id: UUID, animated: Bool = true) {
@@ -284,6 +381,33 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
         mount(sticker)
     }
 
+    // MARK: - 单贴纸隐藏
+
+    /// 隐藏单张贴纸（右键菜单 / 列表）：窗口收起但贴纸保留，可从列表单独召回。
+    func setStickerHidden(id: UUID, hidden: Bool) {
+        guard var sticker = store.sticker(id: id),
+              sticker.hidden != hidden else { return }
+        sticker.hidden = hidden
+        store.upsert(sticker)
+        guard let controller = controllers[id] else { return }
+        let panel = controller.panel
+        if hidden {
+            controller.viewController.endEditing()
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.18
+                panel.animator().alphaValue = 0
+            }, completionHandler: { panel.orderOut(nil) })
+        } else if !store.allHidden {
+            panel.alphaValue = 0
+            panel.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.18
+                panel.animator().alphaValue = store.clickThrough ? Self.clickThroughAlpha : 1
+            })
+        }
+        Log.info("单贴纸隐藏 hidden=\(hidden) id=\(id)")
+    }
+
     func duplicateSticker(_ id: UUID) {
         guard let source = store.sticker(id: id) else { return }
         let copy = Sticker(
@@ -291,7 +415,8 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
             paperX: source.paperX + 28, paperY: max(ScreenGeometry.primaryVisibleFrame().minY + 20, source.paperY - 28),
             width: source.width, height: source.height,
             scale: source.scale, heightOverride: source.heightOverride,
-            fontName: source.fontName, fontSize: source.fontSize
+            fontName: source.fontName, fontSize: source.fontSize,
+            hidden: false // 副本直接可见：复制的就是「想要看到的这张」
         )
         store.upsert(copy)
         mount(copy)
@@ -317,18 +442,44 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
         Log.info("贴纸层级切换 pinnedToDesktop=\(pinned)")
     }
 
+    /// 鼠标穿透模式的提示性不透明度：贴纸仍清晰可读，但一眼可辨「当前不可交互」。
+    static let clickThroughAlpha: CGFloat = 0.82
+
+    /// 切换「鼠标穿透」：贴纸保持可见，但鼠标事件（点击/拖动/悬停）全部穿到下层窗口。
+    /// 穿透后无法直接点击贴纸本身，需通过状态栏菜单或 ⌥⌘P 全局热键关闭。
+    func applyClickThrough(_ enabled: Bool) {
+        guard enabled != store.clickThrough else { return }
+        store.setClickThrough(enabled)
+        for controller in controllers.values {
+            controller.viewController.handleClickThroughChanged(enabled: enabled)
+            controller.panel.ignoresMouseEvents = enabled
+            let panel = controller.panel
+            if panel.isVisible {
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.duration = 0.18
+                    panel.animator().alphaValue = enabled ? Self.clickThroughAlpha : 1
+                })
+            }
+        }
+        statusItem.updateClickThroughState(clickThrough: enabled)
+        Log.info("鼠标穿透切换 clickThrough=\(enabled)")
+    }
+
     /// 定位贴纸：必要时拯救回屏幕，置前并闪烁提示（状态栏「贴纸列表」点击）。
     func revealSticker(id: UUID) {
         guard let controller = controllers[id] else { return }
         if store.allHidden {
             setStickersHidden(false)
         }
+        if controller.viewController.sticker.hidden {
+            setStickerHidden(id: id, hidden: false)
+        }
         let vc = controller.viewController
         let rescued = ScreenGeometry.rescueFrame(vc.sticker.paperFrame)
         let cg = ScreenGeometry.cgTopLeftRect(rescued)
         vc.movePaperToCGTopLeft(CGPoint(x: cg.minX, y: cg.minY))
         controller.panel.orderFrontRegardless()
-        vc.flashPanel()
+        vc.flashPanel(resumeAlpha: store.clickThrough ? Self.clickThroughAlpha : 1)
     }
 
     func setStickersHidden(_ hidden: Bool) {
@@ -346,8 +497,17 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
                 panel.orderFrontRegardless()
                 NSAnimationContext.runAnimationGroup({ context in
                     context.duration = 0.18
-                    panel.animator().alphaValue = 1
+                    panel.animator().alphaValue = store.clickThrough ? Self.clickThroughAlpha : 1
                 })
+            }
+        }
+        // 「显示全部」同时清除单贴纸隐藏标记：用户预期是看到所有贴纸，
+        // 不应出现“显示了全部却还少一张”的困惑。
+        if !hidden {
+            for sticker in store.stickers where sticker.hidden {
+                var cleared = sticker
+                cleared.hidden = false
+                store.upsert(cleared)
             }
         }
     }
@@ -422,14 +582,46 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
             sticker.paperFrame = frame
             store.upsert(sticker)
             let controller = StickerWindowController(sticker: sticker, callbacks: makeCallbacks())
-            controller.panel.level = stickerLevel
             controllers[sticker.id] = controller
-            if !store.allHidden {
-                controller.panel.orderFrontRegardless()
-            }
+            presentPanel(of: controller)
         }
         if !store.stickers.isEmpty {
             Log.info("恢复 \(store.stickers.count) 张贴纸")
+        }
+    }
+
+    // MARK: - 全局快捷键
+
+    /// 注册全局热键（任何应用下可用）。定义集中在 AppHotkeys，菜单展示同源。
+    private func installGlobalHotkeys() {
+        let definitions: [(definition: GlobalHotkeyDefinition, id: UInt32, handler: () -> Void)] = [
+            (definition: AppHotkeys.toggleVisibility, id: 1, handler: { [weak self] in
+                guard let self else { return }
+                self.setStickersHidden(!self.store.allHidden)
+            }),
+            (definition: AppHotkeys.toggleClickThrough, id: 2, handler: { [weak self] in
+                guard let self else { return }
+                self.applyClickThrough(!self.store.clickThrough)
+            }),
+            (definition: AppHotkeys.newSticker, id: 3, handler: { [weak self] in
+                self?.openComposer()
+            }),
+            (definition: AppHotkeys.undo, id: 4, handler: { [weak self] in
+                self?.performUndo()
+            }),
+            (definition: AppHotkeys.newFromClipboard, id: 5, handler: { [weak self] in
+                self?.newFromClipboardAction()
+            }),
+        ]
+        for item in definitions {
+            if let center = GlobalHotkeyCenter(definition: item.definition, id: item.id, handler: item.handler) {
+                globalHotkeys.append(center)
+            } else {
+                Log.warn("全局快捷键 \(item.definition.display) 注册失败（可能被其他应用占用）")
+            }
+        }
+        if !globalHotkeys.isEmpty {
+            Log.info("全局快捷键已启用: \(globalHotkeys.count) 个")
         }
     }
 
@@ -465,8 +657,25 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
             ))
         }
         RuntimeStateDumper.write(allHidden: store.allHidden, pinnedToDesktop: store.pinnedToDesktop,
-                                 entries: entries, to: url)
+                                 clickThrough: store.clickThrough, entries: entries, to: url)
     }
+
+    // MARK: - Chrome 可发现性提示
+
+    /// 新建贴纸后首次出现悬停控件前，让 grip 短暂可见一下，
+    /// 提示「贴纸可以缩放」——只在应用生命周期内做一次，不打扰老用户。
+    func hintStickerChromeIfNeeded() {
+        guard !Self.didHintChrome else { return }
+        Self.didHintChrome = true
+        guard !store.clickThrough, !store.allHidden else { return }
+        // 依次取最新一张可见贴纸闪烁工具栏
+        for controller in controllers.values {
+            controller.viewController.flashChromeHint()
+            break
+        }
+    }
+
+    private static var didHintChrome = false
 }
 
 extension CGRect: Codable {

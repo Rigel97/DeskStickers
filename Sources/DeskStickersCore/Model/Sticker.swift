@@ -27,6 +27,8 @@ public struct Sticker: Codable, Equatable, Identifiable {
     public var fontName: String?
     /// 字号覆盖（pt，nil = 跟随风格与缩放）。
     public var fontSize: Double?
+    /// 单贴纸隐藏：窗口保留但 orderOut，从列表可单独召回（不影响全局 allHidden）。
+    public var hidden: Bool
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -43,6 +45,7 @@ public struct Sticker: Codable, Equatable, Identifiable {
         heightOverride: Double? = nil,
         fontName: String? = nil,
         fontSize: Double? = nil,
+        hidden: Bool = false,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -58,6 +61,7 @@ public struct Sticker: Codable, Equatable, Identifiable {
         self.heightOverride = heightOverride
         self.fontName = fontName
         self.fontSize = fontSize
+        self.hidden = hidden
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -84,10 +88,10 @@ public struct Sticker: Codable, Equatable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, text, styleID = "style", colorIndex, paperX, paperY, width, height
-        case scale, heightOverride, fontName, fontSize, createdAt, updatedAt
+        case scale, heightOverride, fontName, fontSize, hidden, createdAt, updatedAt
     }
 
-    /// 旧版本状态文件没有 scale/heightOverride/fontName/fontSize 字段，解码时取默认值。
+    /// 旧版本状态文件没有 scale/heightOverride/fontName/fontSize/hidden 字段，解码时取默认值。
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -102,6 +106,7 @@ public struct Sticker: Codable, Equatable, Identifiable {
         heightOverride = try c.decodeIfPresent(Double.self, forKey: .heightOverride)
         fontName = try c.decodeIfPresent(String.self, forKey: .fontName)
         fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize)
+        hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
     }

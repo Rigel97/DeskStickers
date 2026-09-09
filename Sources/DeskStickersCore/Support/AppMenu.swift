@@ -6,6 +6,8 @@ import AppKit
     @objc func newFromClipboardAction()
     @objc func toggleStickersVisibility()
     @objc func togglePinnedToDesktop()
+    @objc func toggleClickThrough()
+    @objc func undoAction()
     @objc func revealStickerAction(_ sender: NSMenuItem)
     @objc func showAboutAction()
 }
@@ -17,6 +19,8 @@ struct MainMenuHandles {
     let visibilityToggle: NSMenuItem
     /// 「钉在桌面」：勾选状态随层级模式刷新。
     let pinnedToggle: NSMenuItem
+    /// 「鼠标穿透」：勾选状态随穿透模式刷新。
+    let clickThroughToggle: NSMenuItem
 }
 
 /// 主菜单 + 状态栏图标的构建与更新。
@@ -45,9 +49,11 @@ enum AppMenuFactory {
 
         let fileMenuItem = NSMenuItem()
         let fileMenu = NSMenu(title: "文件")
-        fileMenu.addItem(withTitle: "新建贴纸", action: #selector(AppMenuActions.newStickerAction), keyEquivalent: "n")
-        let fromClipboard = NSMenuItem(title: "从剪贴板新建贴纸", action: #selector(AppMenuActions.newFromClipboardAction), keyEquivalent: "V")
-        fromClipboard.keyEquivalentModifierMask = [.command, .shift]
+        let newItem = NSMenuItem(title: "新建贴纸", action: #selector(AppMenuActions.newStickerAction), keyEquivalent: AppHotkeys.newSticker.keyEquivalent)
+        newItem.keyEquivalentModifierMask = AppHotkeys.newSticker.equivalentMask
+        fileMenu.addItem(newItem)
+        let fromClipboard = NSMenuItem(title: "从剪贴板新建贴纸", action: #selector(AppMenuActions.newFromClipboardAction), keyEquivalent: AppHotkeys.newFromClipboard.keyEquivalent)
+        fromClipboard.keyEquivalentModifierMask = AppHotkeys.newFromClipboard.equivalentMask
         fileMenu.addItem(fromClipboard)
         fileMenuItem.submenu = fileMenu
         mainMenu.addItem(fileMenuItem)
@@ -68,11 +74,14 @@ enum AppMenuFactory {
 
         let stickerMenuItem = NSMenuItem()
         let stickerMenu = NSMenu(title: "贴纸")
+        // 等效键展示的 ⌥⌘\ 即全局热键（GlobalHotkeyCenter 注册）：
+        // 系统热键会被优先消费，本应用激活时该等效键不会重复触发。
         let toggleItem = NSMenuItem(
             title: "显示/隐藏全部贴纸",
             action: #selector(AppMenuActions.toggleStickersVisibility),
-            keyEquivalent: "\\"
+            keyEquivalent: AppHotkeys.toggleVisibility.keyEquivalent
         )
+        toggleItem.keyEquivalentModifierMask = AppHotkeys.toggleVisibility.equivalentMask
         stickerMenu.addItem(toggleItem)
         let pinnedItem = NSMenuItem(
             title: "钉在桌面（不遮挡窗口）",
@@ -80,10 +89,18 @@ enum AppMenuFactory {
             keyEquivalent: ""
         )
         stickerMenu.addItem(pinnedItem)
+        let clickThroughItem = NSMenuItem(
+            title: "鼠标穿透（点击穿到下层窗口）",
+            action: #selector(AppMenuActions.toggleClickThrough),
+            keyEquivalent: AppHotkeys.toggleClickThrough.keyEquivalent
+        )
+        clickThroughItem.keyEquivalentModifierMask = AppHotkeys.toggleClickThrough.equivalentMask
+        stickerMenu.addItem(clickThroughItem)
         stickerMenuItem.submenu = stickerMenu
         mainMenu.addItem(stickerMenuItem)
 
-        return MainMenuHandles(menu: mainMenu, visibilityToggle: toggleItem, pinnedToggle: pinnedItem)
+        return MainMenuHandles(menu: mainMenu, visibilityToggle: toggleItem, pinnedToggle: pinnedItem,
+                               clickThroughToggle: clickThroughItem)
     }
 }
 
@@ -102,6 +119,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var mainMenuToggleItem: NSMenuItem?
     private var mainMenuPinnedItem: NSMenuItem?
+    private var mainMenuClickThroughItem: NSMenuItem?
     private let stickerListMenu = NSMenu()
 
     /// 安装状态栏图标（幂等）。
@@ -124,8 +142,23 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         listParent.submenu = stickerListMenu
         menu.addItem(listParent)
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(withTitle: "显示/隐藏全部贴纸", action: #selector(AppMenuActions.toggleStickersVisibility), keyEquivalent: "")
+        menu.addItem(withTitle: "撤销", action: #selector(AppMenuActions.undoAction), keyEquivalent: "z")
+        menu.addItem(NSMenuItem.separator())
+        let statusToggle = NSMenuItem(
+            title: "显示/隐藏全部贴纸",
+            action: #selector(AppMenuActions.toggleStickersVisibility),
+            keyEquivalent: AppHotkeys.toggleVisibility.keyEquivalent
+        )
+        statusToggle.keyEquivalentModifierMask = AppHotkeys.toggleVisibility.equivalentMask
+        menu.addItem(statusToggle)
         menu.addItem(withTitle: "钉在桌面（不遮挡窗口）", action: #selector(AppMenuActions.togglePinnedToDesktop), keyEquivalent: "")
+        let statusClickThrough = NSMenuItem(
+            title: "鼠标穿透（点击穿到下层窗口）",
+            action: #selector(AppMenuActions.toggleClickThrough),
+            keyEquivalent: AppHotkeys.toggleClickThrough.keyEquivalent
+        )
+        statusClickThrough.keyEquivalentModifierMask = AppHotkeys.toggleClickThrough.equivalentMask
+        menu.addItem(statusClickThrough)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "关于桌面贴纸", action: #selector(AppMenuActions.showAboutAction), keyEquivalent: "")
         menu.addItem(withTitle: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -142,9 +175,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         let entries = stickerListProvider?() ?? []
         guard !entries.isEmpty else {
-            let empty = NSMenuItem(title: "无贴纸", action: nil, keyEquivalent: "")
-            empty.isEnabled = false
-            menu.addItem(empty)
+            // 空状态引导：不让用户走进死胡同，直接给出下一步动作。
+            let create = NSMenuItem(title: "还没有贴纸，点此新建", action: #selector(AppMenuActions.newStickerAction), keyEquivalent: "")
+            menu.addItem(create)
             return
         }
         for entry in entries {
@@ -156,6 +189,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             item.representedObject = entry.id.uuidString
             menu.addItem(item)
         }
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(withTitle: "新建贴纸…", action: #selector(AppMenuActions.newStickerAction), keyEquivalent: "")
     }
 
     // MARK: - 状态同步
@@ -168,6 +203,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// 绑定主菜单里的「钉在桌面」项，使其勾选状态同步刷新。
     func bindPinnedToggle(_ item: NSMenuItem) {
         mainMenuPinnedItem = item
+    }
+
+    /// 绑定主菜单里的「鼠标穿透」项，使其勾选状态同步刷新。
+    func bindClickThroughToggle(_ item: NSMenuItem) {
+        mainMenuClickThroughItem = item
     }
 
     /// 按当前隐藏状态刷新所有「显示/隐藏」标题。
@@ -186,6 +226,15 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         setMenuItemState(
             action: #selector(AppMenuActions.togglePinnedToDesktop),
             state: pinned ? .on : .off
+        )
+    }
+
+    /// 按当前穿透模式刷新「鼠标穿透」勾选（主菜单绑定项 + 状态栏菜单项）。
+    func updateClickThroughState(clickThrough: Bool) {
+        mainMenuClickThroughItem?.state = clickThrough ? .on : .off
+        setMenuItemState(
+            action: #selector(AppMenuActions.toggleClickThrough),
+            state: clickThrough ? .on : .off
         )
     }
 

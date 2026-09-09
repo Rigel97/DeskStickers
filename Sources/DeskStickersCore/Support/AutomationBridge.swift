@@ -41,6 +41,9 @@ final class AutomationBridge: NSObject {
             ("hideAll", #selector(handleHideAll)),
             ("showAll", #selector(handleShowAll)),
             ("setPinned", #selector(handleSetPinned)),
+            ("setClickThrough", #selector(handleSetClickThrough)),
+            ("setHidden", #selector(handleSetHidden)),
+            ("setSnap", #selector(handleSetSnap)),
             ("reveal", #selector(handleReveal)),
             ("snapshot", #selector(handleSnapshot)),
             ("dump", #selector(handleDump)),
@@ -161,6 +164,25 @@ final class AutomationBridge: NSObject {
         appController.applyPinnedToDesktop(pinned == "1")
     }
 
+    /// clickThrough 传 "1"/"0"（与 setPinned 对称）。
+    @objc private func handleSetClickThrough(_ note: Notification) {
+        guard let value = info(note)["clickThrough"] else { return }
+        appController.applyClickThrough(value == "1")
+    }
+
+    /// 单贴纸隐藏：hidden 传 "1"/"0"。
+    @objc private func handleSetHidden(_ note: Notification) {
+        guard let id = stickerID(note),
+              let value = info(note)["hidden"] else { return }
+        appController.setStickerHidden(id: id, hidden: value == "1")
+    }
+
+    /// 调试：临时开关拖动吸附。
+    @objc private func handleSetSnap(_ note: Notification) {
+        guard let value = info(note)["enabled"] else { return }
+        AppController.snapEnabled = value == "1"
+    }
+
     @objc private func handleReveal(_ note: Notification) {
         guard let id = stickerID(note) else { return }
         appController.revealSticker(id: id)
@@ -214,7 +236,20 @@ final class AutomationBridge: NSObject {
     }
 
     // 临时调试动作：通过真实事件路径模拟拖拽缩放手柄。
+    // target="catcher" 走移动拖动路径（吸附真实调用链）：dx/dy 为屏幕位移。
     @objc private func handleGripDrag(_ note: Notification) {
+        if info(note)["target"] == "catcher" {
+            guard let id = stickerID(note),
+                  let dx = Double(info(note)["dx"] ?? ""),
+                  let dy = Double(info(note)["dy"] ?? ""),
+                  let controller = appController.panelController(id: id) else {
+                Log.warn("dragMove: 参数错误或找不到贴纸")
+                return
+            }
+            dragViaCatcher(panel: controller.panel, canvas: controller.viewController.view,
+                           dx: CGFloat(dx), dy: CGFloat(dy))
+            return
+        }
         guard let id = stickerID(note),
               let dx = Double(info(note)["dx"] ?? ""),
               let controller = appController.panelController(id: id) else {
@@ -296,6 +331,50 @@ final class AutomationBridge: NSObject {
         send(.leftMouseUp, atScreenPoint: end)
         runloopTick(0.2)
         Log.info("gripDrag: 结束 window=\(panel.frame)")
+        appController.store.persistNow()
+    }
+
+    /// 模拟 catcher 移动拖动（真实事件路径，含吸附）：dx/dy 为 AppKit 屏幕位移。
+    private func dragViaCatcher(panel: NSPanel, canvas: NSView, dx: CGFloat, dy: CGFloat) {
+        func runloopTick(_ seconds: Double) {
+            RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+        }
+        func warp(_ p: CGPoint) {
+            // AppKit 底左坐标 → CG 顶左坐标（真实光标必须同步，catcher 用 NSEvent.mouseLocation 计算 delta）
+            let maxY = NSScreen.screens.first?.frame.maxY ?? 0
+            CGWarpMouseCursorPosition(CGPoint(x: p.x, y: maxY - p.y))
+        }
+        let center = CGPoint(x: canvas.bounds.midX, y: canvas.bounds.midY)
+        let inWindow = canvas.convert(center, to: nil)
+        let onScreen = panel.convertToScreen(NSRect(origin: inWindow, size: .zero)).origin
+        func send(_ type: NSEvent.EventType, atScreenPoint p: CGPoint) {
+            let locationInWindow = panel.convertFromScreen(NSRect(origin: p, size: .zero)).origin
+            guard let event = NSEvent.mouseEvent(
+                with: type, location: locationInWindow,
+                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: panel.windowNumber, context: nil,
+                eventNumber: 0, clickCount: 1, pressure: 0
+            ) else { return }
+            panel.sendEvent(event)
+        }
+        warp(onScreen)
+        send(.mouseMoved, atScreenPoint: onScreen)
+        runloopTick(0.2)
+        send(.leftMouseDown, atScreenPoint: onScreen)
+        runloopTick(0.1)
+        let end = CGPoint(x: onScreen.x + dx, y: onScreen.y + dy)
+        for i in 1...10 {
+            let p = CGPoint(
+                x: onScreen.x + (end.x - onScreen.x) * CGFloat(i) / 10,
+                y: onScreen.y + (end.y - onScreen.y) * CGFloat(i) / 10
+            )
+            warp(p)
+            send(.leftMouseDragged, atScreenPoint: p)
+            runloopTick(0.03)
+        }
+        send(.leftMouseUp, atScreenPoint: end)
+        runloopTick(0.2)
+        Log.info("dragMove: 结束 window=\(panel.frame)")
         appController.store.persistNow()
     }
 }

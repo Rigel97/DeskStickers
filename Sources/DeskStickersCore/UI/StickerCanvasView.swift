@@ -14,6 +14,31 @@ final class StickerCanvasView: NSView {
     var onPaddingDrag: ((NSPoint) -> Void)?
     var onPaddingDragEnded: (() -> Void)?
 
+    /// 吸附修正后的基准重置（同 InteractionCatcherView.rebaseDragOrigin）。
+    func rebaseDragOrigin(to origin: CGPoint) {
+        dragWindowOrigin = origin
+        if dragStart != nil {
+            dragStart = NSEvent.mouseLocation
+        }
+    }
+
+    /// 拖动反馈：按下时轻微「抬起」贴纸，松手恢复原尺寸。
+    var isLifted = false {
+        didSet {
+            guard isLifted != oldValue, let panel = window as? StickerPanel else { return }
+            let scale: CGFloat = isLifted ? 1.02 : 1.0
+            let frame = panel.frame
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            let size = CGSize(width: frame.width * scale, height: frame.height * scale)
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.12
+                context.allowsImplicitAnimation = true
+                panel.setFrame(NSRect(x: center.x - size.width / 2, y: center.y - size.height / 2,
+                                      width: size.width, height: size.height), display: true)
+            })
+        }
+    }
+
     private var hoverHandler: ((Bool) -> Void)?
     private var dragStart: CGPoint?
     private var dragWindowOrigin: CGPoint?

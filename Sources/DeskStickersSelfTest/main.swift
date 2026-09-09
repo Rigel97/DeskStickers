@@ -162,6 +162,75 @@ test("存储-钉在桌面标记持久化与旧版兼容") {
     expect(!decoded.pinnedToDesktop, "旧版 JSON 缺字段时默认 false")
 }
 
+test("存储-鼠标穿透标记持久化与旧版兼容") {
+    let dir = tempStoreDir(); defer { try? FileManager.default.removeItem(at: dir) }
+    let store = StickerStore(directory: dir)
+    expect(!store.clickThrough, "默认关闭鼠标穿透")
+    store.setClickThrough(true)
+    store.persistNow()
+    expect(StickerStore(directory: dir).clickThrough, "重启后保留鼠标穿透状态")
+
+    // 旧版本状态文件没有 clickThrough 字段 → 解码为 false
+    let legacy = Data("""
+    {"version":1,"allHidden":false,"pinnedToDesktop":true,"stickers":[]}
+    """.utf8)
+    let decoded = try JSONDecoder().decode(StickerStoreSnapshot.self, from: legacy)
+    expect(!decoded.clickThrough, "旧版 JSON 缺字段时默认 false")
+    expect(decoded.pinnedToDesktop, "同层其他字段不受影响")
+}
+
+test("模型-hidden 字段持久化与旧版兼容") {
+    let sticker = Sticker(text: "隐藏测试", styleID: "sticky", paperX: 0, paperY: 0,
+                         width: 220, height: 90, hidden: true)
+    expect(sticker.hidden, "构造器可设置 hidden")
+    let json = try JSONEncoder().encode(StickerStoreSnapshot(stickers: [sticker]))
+    let text = String(data: json, encoding: .utf8) ?? ""
+    expect(text.contains("\"hidden\""), "字段名应为 hidden")
+    let restored = try JSONDecoder().decode(StickerStoreSnapshot.self, from: json)
+    expect(restored.stickers[0].hidden, "hidden 经 JSON 往返保留")
+
+    // 旧版 JSON 缺 hidden 字段 → 默认 false
+    var object = try JSONSerialization.jsonObject(with: json) as! [String: Any]
+    var stickers = object["stickers"] as! [[String: Any]]
+    stickers[0].removeValue(forKey: "hidden")
+    object["stickers"] = stickers
+    let legacy = try JSONSerialization.data(withJSONObject: object)
+    let decoded = try JSONDecoder().decode(StickerStoreSnapshot.self, from: legacy)
+    expect(!decoded.stickers[0].hidden, "旧版 JSON 缺 hidden 字段默认 false")
+}
+
+test("吸附-边缘/中线吸附与参考线") {
+    let idA = UUID(), idB = UUID()
+    // A 在 (0,0) 100x100；B 靠近但未对齐：minX 差 4pt（阈值 7 内）
+    let a = CGRect(x: 0, y: 0, width: 100, height: 100)
+    let b = CGRect(x: 4, y: 500, width: 100, height: 100)
+    let result = SnapEngine.snap(windowFrame: b, movingID: idB,
+                                 otherStickers: [(idA, a)], screens: [])
+    expect(result.origin.x == 0, "左边缘吸附到 x=0，实际 \(result.origin.x)")
+    expect(result.guides.contains { $0.axis == .vertical && $0.position == 0 }, "产生垂直参考线")
+
+    // 距离超出阈值：不吸附
+    let far = CGRect(x: 30, y: 500, width: 100, height: 100)
+    let result2 = SnapEngine.snap(windowFrame: far, movingID: idB,
+                                  otherStickers: [(idA, a)], screens: [])
+    expect(result2.origin.x == 30, "超出阈值不吸附")
+    expect(result2.guides.isEmpty, "无参考线")
+
+    // 屏幕边缘贴边吸附
+    let screen = CGRect(x: 0, y: 0, width: 1000, height: 800)
+    let nearEdge = CGRect(x: -5, y: 500, width: 100, height: 100)
+    let result3 = SnapEngine.snap(windowFrame: nearEdge, movingID: idB,
+                                  otherStickers: [], screens: [screen])
+    expect(result3.origin.x == 0, "屏幕左缘贴边吸附")
+
+    // 中线对中：A 100 宽（中线 50），B 60 宽在 x=22（中线 52，差 2pt）→ 吸到 x=20
+    let above = CGRect(x: 22, y: 200, width: 60, height: 60)
+    let result5 = SnapEngine.snap(windowFrame: above, movingID: idB,
+                                  otherStickers: [(idA, a)], screens: [screen])
+    expect(result5.origin.x == 20, "中线对中吸附（x=20），实际 \(result5.origin.x)")
+    expect(result5.guides.contains { $0.axis == .vertical && $0.position == 50 }, "中线参考线在 x=50")
+}
+
 test("存储-moveToEnd 调整层级顺序") {
     let dir = tempStoreDir(); defer { try? FileManager.default.removeItem(at: dir) }
     let store = StickerStore(directory: dir)
