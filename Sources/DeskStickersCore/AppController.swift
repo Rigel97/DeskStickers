@@ -286,6 +286,7 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
                 self?.applyDragSnap(stickerID: sticker.id, windowFrame: windowFrame)
             },
             onDragEnded: { [weak self] sticker in
+                self?.lastDragOrigins[sticker.id] = nil
                 self?.alignmentGuideWindow.hide()
             },
             onToggleHidden: { [weak self] sticker in
@@ -297,9 +298,45 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
     /// 临时验证开关：定位 e2e 时序问题用。
     static var snapEnabled = true
 
+    /// 拖动过程中每张贴纸上一帧的窗口原点：用于计算本帧拖动方向，
+    /// 供吸附引擎做方向感知（离开停靠位不回拉）。拖动结束即清理。
+    private var lastDragOrigins: [UUID: CGPoint] = [:]
+
     /// 拖动过程中的实时吸附：调整窗口原点并展示对齐参考线。
     /// 按住 ⌘ 拖动 = 临时禁用吸附（与其他专业工具的惯例一致）。
     private func applyDragSnap(stickerID: UUID, windowFrame: CGRect) {
+        guard let vc = controllers[stickerID]?.viewController else { return }
+        let insets = vc.style.outerInsets
+        // 统一到纸面坐标系：传入的是窗口 frame，比对目标是其他贴纸的纸面 frame，
+        // 不换算的话 insets 偏移（12pt+）会永远盖过吸附阈值。
+        func paperFrame(ofWindow frame: CGRect) -> CGRect {
+            CGRect(
+                x: frame.minX + insets.left,
+                y: frame.minY + insets.bottom,
+                width: frame.width - insets.left - insets.right,
+                height: frame.height - insets.top - insets.bottom
+            )
+        }
+        func windowOrigin(forPaper paper: CGRect) -> CGPoint {
+            CGPoint(x: paper.minX - insets.left, y: paper.minY - insets.bottom)
+        }
+
+        // 1) 可见顶边界（产品行为，独立于吸附开关与 ⌘）：
+        //    纸面顶边不越过相交屏幕的可见区顶（菜单栏/刘海区域不放贴纸）。
+        var effectiveWindowFrame = windowFrame
+        let proposedPaper = paperFrame(ofWindow: windowFrame)
+        let boundedPaper = ScreenGeometry.clampBelowMenuBar(proposedPaper)
+        if boundedPaper.origin != proposedPaper.origin {
+            let boundedOrigin = windowOrigin(forPaper: boundedPaper)
+            controllers[stickerID]?.panel.setFrameOrigin(boundedOrigin)
+            // 与吸附修正同理：重置拖动基准，否则下一帧会覆盖钳制。
+            vc.catcher.rebaseDragOrigin(to: boundedOrigin)
+            vc.canvas.rebaseDragOrigin(to: boundedOrigin)
+            lastDragOrigins[stickerID] = boundedOrigin
+            effectiveWindowFrame = CGRect(origin: boundedOrigin, size: windowFrame.size)
+        }
+
+        // 2) 吸附（可被 ⌘ 临时禁用；顶部边界已在上方执行，不受影响）
         guard !store.clickThrough, Self.snapEnabled else { return }
         // 按住 ⌘ 拖动 = 临时禁用吸附（与其他专业工具的惯例一致）。
         if NSApp.currentEvent?.modifierFlags.contains(.command) == true {
@@ -312,23 +349,22 @@ final class AppController: NSObject, NSApplicationDelegate, AppMenuActions {
             return (sticker.id, sticker.paperFrame)
         }
         let screens = NSScreen.screens.map { $0.visibleFrame }
-        // 统一到纸面坐标系：传入的是窗口 frame，比对目标是其他贴纸的纸面 frame，
-        // 不换算的话 insets 偏移（12pt+）会永远盖过吸附阈值。
-        guard let vc = controllers[stickerID]?.viewController else { return }
-        let insets = vc.style.outerInsets
-        let paperFrame = CGRect(
-            x: windowFrame.minX + insets.left,
-            y: windowFrame.minY + insets.bottom,
-            width: windowFrame.width - insets.left - insets.right,
-            height: windowFrame.height - insets.top - insets.bottom
-        )
-        let result = SnapEngine.snap(windowFrame: paperFrame, movingID: stickerID,
-                                     otherStickers: others, screens: screens)
-        let snappedOrigin = CGPoint(
-            x: result.origin.x - insets.left,
-            y: result.origin.y - insets.bottom
-        )
-        if snappedOrigin != windowFrame.origin {
+        let paper = paperFrame(ofWindow: effectiveWindowFrame)
+        // 本帧拖动方向：与上一帧（钳制/吸附修正后）的窗口原点相减。
+        // 位移过大视为陈旧记录（新一段拖动/瞬移），当作无方向信息处理。
+        var dragDelta = CGPoint.zero
+        if let previous = lastDragOrigins[stickerID],
+           abs(effectiveWindowFrame.minX - previous.x) <= 60,
+           abs(effectiveWindowFrame.minY - previous.y) <= 60 {
+            dragDelta = CGPoint(x: effectiveWindowFrame.minX - previous.x,
+                                y: effectiveWindowFrame.minY - previous.y)
+        }
+        let result = SnapEngine.snap(windowFrame: paper, movingID: stickerID,
+                                     otherStickers: others, screens: screens,
+                                     dragDelta: dragDelta)
+        let snappedOrigin = windowOrigin(forPaper: CGRect(origin: result.origin, size: paper.size))
+        lastDragOrigins[stickerID] = snappedOrigin
+        if snappedOrigin != effectiveWindowFrame.origin {
             controllers[stickerID]?.panel.setFrameOrigin(snappedOrigin)
             // 重置拖动基准：后续帧从吸附后的位置起算，避免下一帧覆盖吸附修正。
             controllers[stickerID]?.viewController.catcher.rebaseDragOrigin(to: snappedOrigin)

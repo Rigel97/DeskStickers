@@ -25,6 +25,9 @@ public enum ScreenGeometry {
     }
 
     /// 恢复时确保纸面至少有 60% 落在某块屏幕的可见区域内，否则搬回主屏。
+    ///
+    /// 用可见区域（不含菜单栏/Dock）：贴纸保持完整可见，
+    /// 最高位置 = 菜单栏正下方。
     public static func rescueFrame(_ frame: CGRect) -> CGRect {
         for screen in NSScreen.screens {
             let visible = screen.visibleFrame
@@ -58,6 +61,24 @@ public enum ScreenGeometry {
         if let main = NSScreen.main { return main.visibleFrame }
         if let first = NSScreen.screens.first { return first.visibleFrame }
         return CGRect(x: 0, y: 0, width: 1440, height: 900)
+    }
+
+    /// 可见顶边界：纸面顶边不越过任何水平相交屏幕的可见区顶（菜单栏/刘海区域）。
+    ///
+    /// 贴纸保持完整可见（最高停在菜单栏正下方），不钻到菜单栏后面。
+    /// 外接屏无菜单栏（visibleFrame = frame），可到外接屏顶；
+    /// 横跨多屏时取最严格的可见区顶。无相交屏幕时原样返回。
+    public static func clampBelowMenuBar(_ frame: CGRect) -> CGRect {
+        var topLimit: CGFloat?
+        for screen in NSScreen.screens {
+            guard frame.minX < screen.frame.maxX, frame.maxX > screen.frame.minX else { continue }
+            let limit = screen.visibleFrame.maxY
+            topLimit = topLimit.map { min($0, limit) } ?? limit
+        }
+        guard let limit = topLimit, frame.maxY > limit else { return frame }
+        var result = frame
+        result.origin.y = limit - result.height
+        return result
     }
 
     /// AppKit 全局坐标（原点左下）→ CG 顶左坐标，用于与 CGWindowList 对账。

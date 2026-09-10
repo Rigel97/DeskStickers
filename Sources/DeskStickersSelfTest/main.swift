@@ -231,6 +231,64 @@ test("吸附-边缘/中线吸附与参考线") {
     expect(result5.guides.contains { $0.axis == .vertical && $0.position == 50 }, "中线参考线在 x=50")
 }
 
+test("吸附-方向感知：慢速拖动可穿越吸附带（不形成隐形墙）") {
+    let id = UUID()
+    let visible = CGRect(x: 0, y: 0, width: 1000, height: 800)
+
+    // 帧 1：迎向可见区顶边（顶边 798，向上拖 +2）→ 停靠 800
+    var r = SnapEngine.snap(windowFrame: CGRect(x: 400, y: 698, width: 120, height: 100),
+                            movingID: id, otherStickers: [], screens: [visible],
+                            dragDelta: CGPoint(x: 0, y: 2))
+    expect(r.origin.y == 700, "迎向可见区顶边时停靠 y=700，实际 \(r.origin.y)")
+
+    // 帧 2：从停靠位继续向上（顶边 802，向上拖 +2）→ 不应被拉回（旧行为会拉回 800）
+    //   （实际拖动中顶部由 clampBelowMenuBar 钳到可见区顶，这里验证吸附本身不回拉）
+    r = SnapEngine.snap(windowFrame: CGRect(x: 400, y: 702, width: 120, height: 100),
+                        movingID: id, otherStickers: [], screens: [visible],
+                        dragDelta: CGPoint(x: 0, y: 2))
+    expect(r.origin.y == 702, "离开可见区顶边向上时不再回拉，实际 \(r.origin.y)")
+
+    // 帧 3：向下迎向可见区顶边（顶边 802，向下拖 -2）→ 停靠 800
+    r = SnapEngine.snap(windowFrame: CGRect(x: 400, y: 702, width: 120, height: 100),
+                        movingID: id, otherStickers: [], screens: [visible],
+                        dragDelta: CGPoint(x: 0, y: -2))
+    expect(r.origin.y == 700, "向下迎向可见区顶边时停靠 y=700，实际 \(r.origin.y)")
+
+    // 未传方向（默认 .zero）保持旧的双向行为：现有调用方/测试兼容
+    r = SnapEngine.snap(windowFrame: CGRect(x: 400, y: 702, width: 120, height: 100),
+                        movingID: id, otherStickers: [], screens: [visible])
+    expect(r.origin.y == 700, "无方向信息时保持旧行为（吸附可见区顶边）")
+
+    // 左右边缘同样方向感知：停靠在左缘后向屏内拖不再被拉回
+    var rx = SnapEngine.snap(windowFrame: CGRect(x: 3, y: 500, width: 120, height: 100),
+                             movingID: id, otherStickers: [], screens: [visible],
+                             dragDelta: CGPoint(x: -2, y: 0))
+    expect(rx.origin.x == 0, "迎向左缘时停靠 x=0")
+    rx = SnapEngine.snap(windowFrame: CGRect(x: 4, y: 500, width: 120, height: 100),
+                         movingID: id, otherStickers: [], screens: [visible],
+                         dragDelta: CGPoint(x: 4, y: 0))
+    expect(rx.origin.x == 4, "离开左缘向屏内拖时不再回拉，实际 \(rx.origin.x)")
+}
+
+test("几何-可见顶边界：纸面顶边不越过菜单栏下缘") {
+    guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+    let size = CGSize(width: 200, height: 160)
+    let visibleTop = screen.visibleFrame.maxY
+
+    // 顶边深入菜单栏区域 → 钳到可见区顶
+    let overshoot = CGRect(x: screen.frame.midX - size.width / 2,
+                           y: screen.frame.maxY - size.height + 20,
+                           width: size.width, height: size.height)
+    let clamped = ScreenGeometry.clampBelowMenuBar(overshoot)
+    expect(abs(clamped.maxY - visibleTop) < 0.5, "越顶贴纸被钳到可见区顶，实际 \(clamped.maxY) / 预期 \(visibleTop)")
+
+    // 顶边在可见区内 → 原样返回
+    let inside = CGRect(x: screen.frame.midX - size.width / 2,
+                        y: visibleTop - size.height - 5,
+                        width: size.width, height: size.height)
+    expect(ScreenGeometry.clampBelowMenuBar(inside) == inside, "界内贴纸不受影响")
+}
+
 test("存储-moveToEnd 调整层级顺序") {
     let dir = tempStoreDir(); defer { try? FileManager.default.removeItem(at: dir) }
     let store = StickerStore(directory: dir)
@@ -461,6 +519,16 @@ test("几何-界内矩形保持不变") {
 test("几何-远屏贴纸拉回主屏") {
     let rescued = ScreenGeometry.rescueFrame(CGRect(x: 90000, y: 90000, width: 220, height: 160))
     expect(ScreenGeometry.primaryVisibleFrame().intersects(rescued))
+}
+
+test("几何-顶端贴纸恢复时钳到可见区顶（菜单栏正下方）") {
+    guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+    let size = CGSize(width: 200, height: 160)
+    let frame = CGRect(x: screen.frame.midX - size.width / 2,
+                       y: screen.frame.maxY - size.height + 10,
+                       width: size.width, height: size.height)
+    let rescued = ScreenGeometry.rescueFrame(frame)
+    expect(rescued.maxY <= screen.visibleFrame.maxY + 0.5, "顶端贴纸恢复时不超过可见区顶，实际 \(rescued.maxY) / 可见顶 \(screen.visibleFrame.maxY)")
 }
 
 test("几何-级联位置避开重叠且在屏内") {

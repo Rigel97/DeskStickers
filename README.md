@@ -8,7 +8,7 @@ Pure Swift + AppKit, zero third-party dependencies, built with SwiftPM.
 
 - **8 hand-drawn styles** — memo pad, notebook, handwriting, minimalist, retro, chalkboard, kawaii, and monospace — each with its own paper texture, shadow, and color variants
 - **Free placement** — drag stickers anywhere; they float above normal windows and stay put across Spaces
-- **Drag snapping** — stickers auto-align to the edges/centerlines of other stickers and to screen edges while dragging (blue guides; hold ⌘ while dragging to temporarily disable)
+- **Drag snapping** — stickers auto-align to the edges/centerlines of other stickers and to screen edges while dragging (blue guides; hold ⌘ while dragging to temporarily disable); screen edges act as docking points — they snap when you drag toward them and release naturally as you drag away; the highest position is right below the menu bar (stickers always stay fully visible, never tucked behind it), and external displays (no menu bar) allow going all the way to the top
 - **Per-sticker hide** — right-click → Hide Sticker to tuck one away temporarily; recall it individually from the status-bar sticker list, or use Show All to bring everything back
 - **Global shortcuts** (usable from any app): ⌥⌘N new sticker · ⌥⌘V instant sticker from clipboard · ⌥⌘Z undo · ⌥⌘\ show/hide all · ⌥⌘P click-through
 - **Pin to desktop** — a one-click layer switch that sinks stickers to the desktop layer so they stop covering the windows you're working in
@@ -64,7 +64,7 @@ Sources/
     Support/        automation bridge, screen geometry, global hotkeys (Carbon), drag-snap engine, logging
     AppController.swift
   DeskStickers/     executable entry point
-  DeskStickersSelfTest/  custom test runner (248 assertions)
+  DeskStickersSelfTest/  custom test runner (257 assertions)
 Scripts/
   make-app.sh       package the .app (icon + ad-hoc signing + LSUIElement)
   run-tests.sh      self-tests

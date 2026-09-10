@@ -28,11 +28,15 @@ public enum SnapEngine {
     /// - Parameters:
     ///   - windowFrame: 当前拖动中的窗口 frame（AppKit 坐标）。
     ///   - movingID: 正在拖动的贴纸 id（排除自身）。
-    ///   - otherFrames: 其他贴纸的纸面矩形。
-    ///   - screens: 可用屏幕。
+    ///   - otherStickers: 其他贴纸的纸面矩形。
+    ///   - screens: 屏幕可见区域（不含菜单栏/Dock）。最高停靠位 = 可见区顶
+    ///     （菜单栏正下方，贴纸完整可见；顶部边界由 ScreenGeometry.clampBelowMenuBar 负责）。
+    ///   - dragDelta: 本帧拖动位移（窗口原点逐帧变化量）。屏幕边缘候选仅在本帧
+    ///     朝向该边缘时吸附；正要离开停靠位时不回拉。默认 .zero = 双向（旧行为）。
     public static func snap(windowFrame: CGRect, movingID: UUID,
                             otherStickers: [(id: UUID, frame: CGRect)],
-                            screens: [NSRect]) -> Result {
+                            screens: [NSRect],
+                            dragDelta: CGPoint = .zero) -> Result {
         var origin = windowFrame.origin
         var guides: [Guide] = []
         // 全局各吸附候选按距离竞争，最终各轴只取距离最小者。
@@ -79,14 +83,28 @@ public enum SnapEngine {
                       guide: horizontalGuide(at: f.midY, between: windowFrame, and: f))
         }
 
-        // 2) 屏幕安全区：贴纸拖到屏幕边缘时吸附到可见区域边缘（贴边摆放）
+        // 2) 屏幕安全区：贴纸拖到屏幕边缘时吸附到可见区域边缘（贴边摆放）。
+        //    方向感知：屏幕边缘是「停靠点」而非「墙」——仅当本帧拖动迎向该边缘时才吸附，
+        //    正在离开时不回拉。否则阈值带（7pt）内慢速拖动每帧都被拉回，永远出不来。
+        //    顶部边界（菜单栏下缘）不在这里：由 AppController 调 clampBelowMenuBar 统一执行。
         for screen in screens {
             let visible = screen
-            // 帖纸完全贴出屏幕左右时不吸附（允许用户自由摆放）
-            considerX(visible.minX, delta: visible.minX - windowFrame.minX, guide: nil)
-            considerX(visible.maxX, delta: visible.maxX - windowFrame.maxX, guide: nil)
-            considerY(visible.minY, delta: visible.minY - windowFrame.minY, guide: nil)
-            considerY(visible.maxY, delta: visible.maxY - windowFrame.maxY, guide: nil)
+            let leftDelta = visible.minX - windowFrame.minX
+            let rightDelta = visible.maxX - windowFrame.maxX
+            let bottomDelta = visible.minY - windowFrame.minY
+            let topDelta = visible.maxY - windowFrame.maxY
+            if movesTowardEdge(leftDelta, drag: dragDelta.x) {
+                considerX(visible.minX, delta: leftDelta, guide: nil)
+            }
+            if movesTowardEdge(rightDelta, drag: dragDelta.x) {
+                considerX(visible.maxX, delta: rightDelta, guide: nil)
+            }
+            if movesTowardEdge(bottomDelta, drag: dragDelta.y) {
+                considerY(visible.minY, delta: bottomDelta, guide: nil)
+            }
+            if movesTowardEdge(topDelta, drag: dragDelta.y) {
+                considerY(visible.maxY, delta: topDelta, guide: nil)
+            }
         }
 
         if let x = bestX { origin.x += x.delta; guides.append(contentsOf: compactGuides(x.guide)) }
@@ -96,6 +114,17 @@ public enum SnapEngine {
 
     private static func compactGuides(_ guide: Guide?) -> [Guide] {
         if let guide { return [guide] } else { return [] }
+    }
+
+    /// 屏幕边缘吸附的方向守卫：候选位移与拖动方向同向（或任一为零）时才允许吸附。
+    ///
+    /// 候选 delta 表示“吸附会把窗口往哪个方向推”；dragDelta 是本帧拖动的实际方向。
+    /// 两者相反说明用户正把贴纸拖离这个停靠位，此时不吸附，
+    /// 否则阈值带内慢速拖动会被反复拉回，形成拖不出去的“隐形墙”。
+    /// 贴纸间对齐不经过此守卫（对齐是对称的期望行为）。
+    private static func movesTowardEdge(_ candidateDelta: CGFloat, drag: CGFloat) -> Bool {
+        if candidateDelta == 0 || drag == 0 { return true }
+        return (candidateDelta > 0) == (drag > 0)
     }
 
     // 参考线只在两矩形重叠的区间内绘制，避免满屏长线。

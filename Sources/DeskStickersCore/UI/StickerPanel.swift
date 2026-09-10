@@ -27,4 +27,15 @@ final class StickerPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    /// 解除系统默认的窗口位置钳制。
+    ///
+    /// NSWindow 在 setFrame / setFrameOrigin 时会调用 constrainFrameRect，
+    /// 默认实现把窗口顶边钳到屏幕可见区顶（菜单栏下缘）——但作用在窗口坐标上，
+    /// 会把纸面顶边多压低一个外边距，且与吸附/拖动逻辑冲突。
+    /// 顶部边界由 ScreenGeometry.clampBelowMenuBar 在纸面坐标上统一执行
+    /// （纸面顶边最高 = 菜单栏下缘），这里解除系统钳制让产品逻辑全权负责。
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        return frameRect
+    }
 }
