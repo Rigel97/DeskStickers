@@ -30,14 +30,14 @@ final class PaperEdgeView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         window?.orderFront(nil)
-        dragStart = NSEvent.mouseLocation
+        dragStart = event.screenLocation
         didResize = false
         onResizeStart?()
     }
 
     override func mouseDragged(with event: NSEvent) {
         guard let start = dragStart else { return }
-        let current = NSEvent.mouseLocation
+        let current = event.screenLocation
         let delta = CGPoint(x: current.x - start.x, y: current.y - start.y)
         if abs(delta.x) > 1 || abs(delta.y) > 1 { didResize = true }
         onResizeDelta?(delta.x, delta.y)

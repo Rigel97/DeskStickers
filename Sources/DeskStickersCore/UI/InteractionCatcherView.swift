@@ -15,16 +15,20 @@ final class InteractionCatcherView: NSView {
 
     /// 吸附修正后的基准重置：后续 delta 从新 origin 起算，
     /// 否则下一帧会用旧基准覆盖吸附修正。
+    /// delta 基于事件位置（无光标竞态），但 rebase 必须同步把事件基准
+    /// 重置为最近一次事件位置，恢复「增量式」语义——否则下一帧的累计
+    /// delta 会叠加到吸附后的 origin 上，连续吸附帧时位移被反复累加放大。
     func rebaseDragOrigin(to origin: CGPoint) {
         dragWindowOrigin = origin
-        // 同步按下时的鼠标基准，保证后续帧的 delta 连续。
-        if dragStart != nil {
-            dragStart = NSEvent.mouseLocation
+        if let last = lastEventLocation {
+            dragStart = last
         }
     }
 
     private var dragStart: CGPoint?
     private var dragWindowOrigin: CGPoint?
+    /// 最近一次 mouseDragged 的事件屏幕位置（rebase 的增量基准）。
+    private var lastEventLocation: CGPoint?
     private var didMove = false
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -41,14 +45,15 @@ final class InteractionCatcherView: NSView {
             return
         }
         didMove = false
-        dragStart = NSEvent.mouseLocation
+        dragStart = event.screenLocation
         dragWindowOrigin = window.frame.origin
         onLift?(true)
     }
 
     override func mouseDragged(with event: NSEvent) {
         guard let start = dragStart, let origin = dragWindowOrigin else { return }
-        let current = NSEvent.mouseLocation
+        let current = event.screenLocation
+        lastEventLocation = current
         let delta = CGPoint(x: current.x - start.x, y: current.y - start.y)
         if abs(delta.x) > 3 || abs(delta.y) > 3 {
             didMove = true
@@ -62,6 +67,7 @@ final class InteractionCatcherView: NSView {
         let wasDragging = dragStart != nil
         dragStart = nil
         dragWindowOrigin = nil
+        lastEventLocation = nil
         NSCursor.openHand.set()
         onLift?(false)
         if wasDragging {

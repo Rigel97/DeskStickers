@@ -319,6 +319,43 @@ s5 = sticker_by_id(state, sid2)
 check("恢复自动高度（override 清空）", s5.get("heightOverride") is None)
 check("高度回到自适应", not near(rect_of(s5)[3], h4), f"{rect_of(s5)[3]} vs {h4}")
 
+print("\n== 11c. 鼠标拖动移动贴纸（真实事件路径，尺寸不得变化）==")
+# 回归锁定：曾有的 bug——按下时的「抬起」反馈用 setFrame 把窗口放大 1.02 倍，
+# 松手时「×1.0 恢复」在数学上无法复原，导致每拖一次贴纸就永久变大 2% 并被持久化。
+# 拖动走 catcher 的真实鼠标事件链（mouseDown → dragged → mouseUp → commit）。
+# 注意：dn() 只发通知不等处理；catcher 移动路径在 mouseUp 才写模型（resize 路径
+# 是逐帧写），必须等待处理完成（约 0.9s，含内部 runloop tick）再 dump。
+sid_drag = state["stickers"][0]["id"]
+bx, by, bw, bh = rect_of(state["stickers"][0])
+# 位移步长必须大于吸附阈值 7pt（每帧 = 总位移/10）：慢速拖动会被其他贴纸的
+# 双向对齐吸附锁死在停靠位（设计行为，非 bug）；且多张贴纸同排/同列分布，
+# 起点恰在对齐目标上，dx=40 每帧 4pt 曾被完全吸回原地。
+dn("gripDrag", id=sid_drag, target="catcher", dx="100", dy="-80")
+time.sleep(2.5)
+state = dump()
+sd = sticker_by_id(state, sid_drag)
+x1, y1, w1, h1 = rect_of(sd)
+# 首次拖动允许 ≤1pt：模型纸面高度是整数（ceil），而窗口 frame 被系统像素对齐
+# （外边距含小数），首次 commit 会把窗口实际几何写回模型，出现一次性亚像素修正；
+# 旧 bug 的每次 +2% 漂移远超此容差。dump 为 CG 顶左坐标，y 与 dy 反向。
+check("拖动移动：宽度基本不变", near(w1, bw, 1.0), f"{w1} vs {bw}")
+check("拖动移动：高度基本不变", near(h1, bh, 1.0), f"{h1} vs {bh}")
+check("拖动移动：位置随拖动平移",
+      near(x1, bx + 100, 10) and near(y1, by + 80, 10),
+      f"({x1},{y1}) vs ({bx + 100},{by + 80})")
+# 第二次拖动：几何已与窗口像素对齐，此后任何拖动都必须严格零漂移（无累积变化）。
+# 同样保持每帧步长 > 7pt：dy=40（每帧 4pt）曾被 cute 顶边的对齐吸附锁死原地。
+dn("gripDrag", id=sid_drag, target="catcher", dx="-100", dy="80")
+time.sleep(2.5)
+state = dump()
+sd = sticker_by_id(state, sid_drag)
+x2, y2, w2, h2 = rect_of(sd)
+check("二次拖动：宽度零漂移", near(w2, w1, 0.1), f"{w2} vs {w1}")
+check("二次拖动：高度零漂移", near(h2, h1, 0.1), f"{h2} vs {h1}")
+check("二次拖动：位置随拖动平移",
+      near(x2, x1 - 100, 10) and near(y2, y1 - 80, 10),
+      f"({x2},{y2}) vs ({x1 - 100},{y1 - 80})")
+
 print("\n== 12. 撤销删除（⌘Z 行为）==")
 state = dump()
 target = state["stickers"][0]

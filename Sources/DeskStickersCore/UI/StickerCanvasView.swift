@@ -15,33 +15,39 @@ final class StickerCanvasView: NSView {
     var onPaddingDragEnded: (() -> Void)?
 
     /// 吸附修正后的基准重置（同 InteractionCatcherView.rebaseDragOrigin）。
+    /// delta 基于事件位置（无光标竞态），rebase 需同步把事件基准重置为
+    /// 最近一次事件位置以恢复增量式语义，避免累计位移叠加波大。
     func rebaseDragOrigin(to origin: CGPoint) {
         dragWindowOrigin = origin
-        if dragStart != nil {
-            dragStart = NSEvent.mouseLocation
+        if let last = lastEventLocation {
+            dragStart = last
         }
     }
 
-    /// 拖动反馈：按下时轻微「抬起」贴纸，松手恢复原尺寸。
+    /// 拖动反馈：按下时轻微「抬起」贴纸，松手恢复。
+    /// 通过画布 layer 的仿射缩放实现，刻意不碰窗口 frame——
+    /// 窗口几何在拖动全程保持真实尺寸，拖动结束的 commitWindowFrame
+    /// 与吸附计算读到的才是未被放大的值。
+    /// （旧实现用 setFrame 把窗口放大 1.02 倍：松手时 frame 已是放大值，
+    /// 「×1.0 恢复」在数学上无法复原，导致每拖一次贴纸就永久变大 2%，
+    /// 且该错误尺寸会随 commitWindowFrame 写入模型持久化。）
     var isLifted = false {
         didSet {
-            guard isLifted != oldValue, let panel = window as? StickerPanel else { return }
+            guard isLifted != oldValue, let layer = layer else { return }
+            layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
             let scale: CGFloat = isLifted ? 1.02 : 1.0
-            let frame = panel.frame
-            let center = CGPoint(x: frame.midX, y: frame.midY)
-            let size = CGSize(width: frame.width * scale, height: frame.height * scale)
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.12
-                context.allowsImplicitAnimation = true
-                panel.setFrame(NSRect(x: center.x - size.width / 2, y: center.y - size.height / 2,
-                                      width: size.width, height: size.height), display: true)
-            })
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(0.12)
+            layer.setAffineTransform(CGAffineTransform(scaleX: scale, y: scale))
+            CATransaction.commit()
         }
     }
 
     private var hoverHandler: ((Bool) -> Void)?
     private var dragStart: CGPoint?
     private var dragWindowOrigin: CGPoint?
+    /// 最近一次 mouseDragged 的事件屏幕位置（rebase 的增量基准）。
+    private var lastEventLocation: CGPoint?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -123,14 +129,15 @@ final class StickerCanvasView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         guard allowsPaddingDrag, let window = window else { return }
-        dragStart = NSEvent.mouseLocation
+        dragStart = event.screenLocation
         dragWindowOrigin = window.frame.origin
         window.orderFront(nil)
     }
 
     override func mouseDragged(with event: NSEvent) {
         guard let start = dragStart, let origin = dragWindowOrigin else { return }
-        let current = NSEvent.mouseLocation
+        let current = event.screenLocation
+        lastEventLocation = current
         let delta = CGPoint(x: current.x - start.x, y: current.y - start.y)
         onPaddingDrag?(CGPoint(x: origin.x + delta.x, y: origin.y + delta.y))
     }
@@ -139,6 +146,7 @@ final class StickerCanvasView: NSView {
         if dragStart != nil {
             dragStart = nil
             dragWindowOrigin = nil
+            lastEventLocation = nil
             onPaddingDragEnded?()
         }
     }

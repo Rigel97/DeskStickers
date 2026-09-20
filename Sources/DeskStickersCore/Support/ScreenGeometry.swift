@@ -93,3 +93,17 @@ public enum ScreenGeometry {
         )
     }
 }
+
+extension NSEvent {
+    /// 事件发生时的屏幕位置（AppKit 全局坐标，原点左下）。
+    ///
+    /// 拖动/缩放手势一律用它而非 NSEvent.mouseLocation：后者是「当前光标」
+    /// 的实时查询，与事件流存在竞态（尤其合成事件 + CGWarp 场景，warp 异步
+    /// 生效期间读到旧位置，整段拖动 delta 会错乱）；事件自带位置才是
+    /// 本次手势的真实基准，且与 AppKit 拖动惯例一致（跟随事件而非光标）。
+    var screenLocation: CGPoint {
+        let target = window ?? NSApp.window(withWindowNumber: windowNumber)
+        guard let target else { return NSEvent.mouseLocation }
+        return target.convertToScreen(NSRect(origin: locationInWindow, size: .zero)).origin
+    }
+}

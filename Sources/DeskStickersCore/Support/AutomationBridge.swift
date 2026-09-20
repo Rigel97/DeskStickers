@@ -269,6 +269,19 @@ final class AutomationBridge: NSObject {
             let maxY = NSScreen.screens.first?.frame.maxY ?? 0
             CGWarpMouseCursorPosition(CGPoint(x: p.x, y: maxY - p.y))
         }
+        /// CGWarp 是异步提交到 WindowServer 的：立即读 NSEvent.mouseLocation
+        /// 可能仍是旧位置（或被真实鼠标输入改写），以它为基准的拖动 delta 会错乱。
+        /// 发送事件前轮询确认光标真正到位；超时则告警并继续（不阻断流程）。
+        func waitCursor(at p: CGPoint, tolerance: CGFloat = 2, timeout: Double = 0.4) {
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline {
+                let loc = NSEvent.mouseLocation
+                if abs(loc.x - p.x) <= tolerance && abs(loc.y - p.y) <= tolerance { return }
+                warp(p)
+                runloopTick(0.05)
+            }
+            Log.warn("gripDrag: 光标未到位 target=\(p) actual=\(NSEvent.mouseLocation)")
+        }
         func send(_ type: NSEvent.EventType, atScreenPoint p: CGPoint, modifiers: NSEvent.ModifierFlags = []) {
             let locationInWindow = panel.convertFromScreen(NSRect(origin: p, size: .zero)).origin
             guard let event = NSEvent.mouseEvent(
@@ -302,6 +315,7 @@ final class AutomationBridge: NSObject {
         let targetInWindow = canvas.convert(CGPoint(x: targetInCanvas.midX, y: targetInCanvas.midY), to: nil)
         let targetOnScreen = panel.convertToScreen(NSRect(origin: targetInWindow, size: .zero)).origin
         warp(targetOnScreen)
+        waitCursor(at: targetOnScreen)
         // 主动喂一个 mouseMoved 让 tracking area 生效
         send(.mouseMoved, atScreenPoint: targetOnScreen)
         runloopTick(0.3)
@@ -325,6 +339,7 @@ final class AutomationBridge: NSObject {
                 y: targetOnScreen.y + (end.y - targetOnScreen.y) * CGFloat(i) / 10
             )
             warp(p)
+            waitCursor(at: p)
             send(.leftMouseDragged, atScreenPoint: p, modifiers: modifiers)
             runloopTick(0.03)
         }
@@ -340,13 +355,26 @@ final class AutomationBridge: NSObject {
             RunLoop.main.run(until: Date().addingTimeInterval(seconds))
         }
         func warp(_ p: CGPoint) {
-            // AppKit 底左坐标 → CG 顶左坐标（真实光标必须同步，catcher 用 NSEvent.mouseLocation 计算 delta）
+            // AppKit 底左坐标 → CG 顶左坐标（真实光标同步仅为视觉一致；
+            // 拖动 delta 已改为基于事件位置 event.screenLocation，不依赖光标读数）
             let maxY = NSScreen.screens.first?.frame.maxY ?? 0
             CGWarpMouseCursorPosition(CGPoint(x: p.x, y: maxY - p.y))
         }
         let center = CGPoint(x: canvas.bounds.midX, y: canvas.bounds.midY)
         let inWindow = canvas.convert(center, to: nil)
         let onScreen = panel.convertToScreen(NSRect(origin: inWindow, size: .zero)).origin
+        /// 同 handleGripDrag：CGWarp 异步生效，事件发送前确认光标到位，
+        /// 避免 dragStart 基准读到旧位置导致整段拖动 delta 错乱。
+        func waitCursor(at p: CGPoint, tolerance: CGFloat = 2, timeout: Double = 0.4) {
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline {
+                let loc = NSEvent.mouseLocation
+                if abs(loc.x - p.x) <= tolerance && abs(loc.y - p.y) <= tolerance { return }
+                warp(p)
+                runloopTick(0.05)
+            }
+            Log.warn("dragMove: 光标未到位 target=\(p) actual=\(NSEvent.mouseLocation)")
+        }
         func send(_ type: NSEvent.EventType, atScreenPoint p: CGPoint) {
             let locationInWindow = panel.convertFromScreen(NSRect(origin: p, size: .zero)).origin
             guard let event = NSEvent.mouseEvent(
@@ -358,6 +386,7 @@ final class AutomationBridge: NSObject {
             panel.sendEvent(event)
         }
         warp(onScreen)
+        waitCursor(at: onScreen)
         send(.mouseMoved, atScreenPoint: onScreen)
         runloopTick(0.2)
         send(.leftMouseDown, atScreenPoint: onScreen)
@@ -369,6 +398,7 @@ final class AutomationBridge: NSObject {
                 y: onScreen.y + (end.y - onScreen.y) * CGFloat(i) / 10
             )
             warp(p)
+            waitCursor(at: p)
             send(.leftMouseDragged, atScreenPoint: p)
             runloopTick(0.03)
         }
